@@ -1,6 +1,33 @@
-# Testnet by default. For pubnet: STELLAR_NETWORK=pubnet docker compose up -d
-# (see README "Pubnet sizing" for retention settings).
-# Explorer UI: http://localhost:8080/ (redirects to /ui/); JSON API on the same port.
+# Queue-mode deployment (testnet by default):
+#
+#   RPC ──▶ fetcher ──▶ Redpanda topic (raw ledgers) ──▶ writer ──▶ Postgres ◀── api (+ UI)
+#
+#   docker compose up -d --build        # http://localhost:8080/ (explorer), /metrics, /ready
+#   STELLAR_NETWORK=pubnet docker compose up -d   (see README "Pubnet sizing" for retention)
+#
+# Single-process alternative without a queue: docker compose --profile direct up -d postgres indexer
+# Indexing starts at the current ledger (START_LEDGER=latest) and survives restarts of any service.
+
+x-indexer: &indexer
+  build: .
+  image: stellar-indexer:dev
+  restart: unless-stopped
+  environment: &env
+    DATABASE_URL: postgres://indexer:indexer@postgres:5432/indexer?sslmode=disable
+    STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+    STELLAR_RPC_URL: ${STELLAR_RPC_URL:-}
+    START_LEDGER: ${START_LEDGER:-latest}
+    KAFKA_BROKERS: redpanda:9092
+    KAFKA_RETENTION: ${KAFKA_RETENTION:-24h}
+    KAFKA_RETENTION_BYTES: ${KAFKA_RETENTION_BYTES:-2147483648}
+    INDEX_FAILED_TXS: ${INDEX_FAILED_TXS:-true}
+    RETAIN_RAW_LEDGERS: ${RETAIN_RAW_LEDGERS:-0}
+    RETAIN_MARKET_LEDGERS: ${RETAIN_MARKET_LEDGERS:-0}
+    RETAIN_CANDLE_LEDGERS: ${RETAIN_CANDLE_LEDGERS:-0}
+    PROTOCOL_VERIFY: ${PROTOCOL_VERIFY:-enforce}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    LOG_FORMAT: ${LOG_FORMAT:-json}
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -16,44 +43,83 @@ services:
       retries: 20
     ports:
       - "127.0.0.1:5432:5432"
+    restart: unless-stopped
 
-  indexer:
-    build: .
-    command: ["run"]
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    volumes:
+      - redpanda:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      retries: 30
+    ports:
+      - "127.0.0.1:19092:19092"
+    restart: unless-stopped
+
+  fetcher:
+    <<: *indexer
+    command: ["fetch"]
     depends_on:
-      postgres:
-        condition: service_healthy
+      postgres: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/health >/dev/null"]
+      interval: 10s
+      retries: 6
+
+  writer:
+    <<: *indexer
+    command: ["write"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redpanda: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/health >/dev/null"]
+      interval: 10s
+      retries: 6
+
+  api:
+    <<: *indexer
+    command: ["api"]
     environment:
-      DATABASE_URL: postgres://indexer:indexer@postgres:5432/indexer?sslmode=disable
-      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
-      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-}
-      START_LEDGER: ${START_LEDGER:--1000}
-      INDEX_FAILED_TXS: ${INDEX_FAILED_TXS:-true}
-      RETAIN_RAW_LEDGERS: ${RETAIN_RAW_LEDGERS:-0}
-      RETAIN_MARKET_LEDGERS: ${RETAIN_MARKET_LEDGERS:-0}
-      RETAIN_CANDLE_LEDGERS: ${RETAIN_CANDLE_LEDGERS:-0}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      UI_ENABLED: ${UI_ENABLED:-true}
+      <<: *env
+      # Labels writes are closed by default; open on this localhost-only port.
+      LABELS_OPEN: ${LABELS_OPEN:-true}
       LABELS_TOKEN: ${LABELS_TOKEN:-}
+      API_KEYS: ${API_KEYS:-}
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-50}
+    depends_on:
+      postgres: { condition: service_healthy }
     ports:
       - "127.0.0.1:8080:8080"
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"]
+      interval: 10s
+      retries: 6
 
-  # Optional read-only API + UI replica (e.g. for a public dashboard):
-  #   docker compose --profile api up -d
-  api:
-    build: .
-    command: ["api"]
-    profiles: ["api"]
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # Single-process pipeline + API without a queue (profile "direct").
+  indexer:
+    <<: *indexer
+    profiles: ["direct"]
+    command: ["run"]
     environment:
-      DATABASE_URL: postgres://indexer:indexer@postgres:5432/indexer?sslmode=disable
-      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      <<: *env
+      KAFKA_BROKERS: ""
+      LABELS_OPEN: ${LABELS_OPEN:-true}
+    depends_on:
+      postgres: { condition: service_healthy }
     ports:
-      - "127.0.0.1:8081:8080"
-    restart: unless-stopped
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:
+  redpanda:
