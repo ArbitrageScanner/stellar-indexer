@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ArbitrageScanner/stellar-indexer/internal/metrics"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/processor"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/source"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/store"
@@ -21,10 +22,15 @@ type Writer interface {
 	Write(ctx context.Context, cursor string, batches []*processor.Batch) (store.WriteStats, error)
 }
 
+// Runner is the queue-less pipeline (RPC → processor → Postgres in one
+// process), for small deployments and development. Resume comes from the DB
+// cursor; the store's idempotent writes make restarts safe.
 type Runner struct {
 	Src         source.Source
 	Store       Writer
 	Proc        *processor.Processor
+	Verifier    Annotator // optional
+	Heartbeat   func(ctx context.Context, ledger, tip uint32)
 	Log         *slog.Logger
 	CursorName  string
 	StartLedger string
@@ -107,7 +113,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	for {
 		next, err := r.runFrom(ctx, from)
 		if err == nil || ctx.Err() != nil {
-			return ctx.Err()
+			return nil //nolint:nilerr // reached EndLedger, or shutdown: not an error
+		}
+		if errors.Is(err, store.ErrChainMismatch) {
+			metrics.ChainBreaks.Inc()
+			return err
 		}
 		if next > from {
 			failures = 0
@@ -139,12 +149,23 @@ func (r *Runner) runFrom(ctx context.Context, from uint32) (uint32, error) {
 	var processed, rows int
 	started := time.Now()
 
+	lastBeat := time.Time{}
 	flush := func() error {
 		if len(pending) == 0 {
 			return nil
 		}
-		st, err := r.Store.Write(ctx, r.CursorName, pending)
+		var st store.WriteStats
+		err := error(nil)
+		if r.Verifier != nil {
+			err = r.Verifier.Annotate(ctx, pending)
+		}
+		if err == nil {
+			start := time.Now()
+			st, err = r.Store.Write(ctx, r.CursorName, pending)
+			metrics.WriteDuration.Observe(time.Since(start).Seconds())
+		}
 		if err != nil {
+			metrics.WriteErrors.Inc()
 			for _, b := range pending {
 				r.Proc.Registry().Forget(b.Assets)
 			}
@@ -153,6 +174,17 @@ func (r *Runner) runFrom(ctx context.Context, from uint32) (uint32, error) {
 		}
 		processed += st.Ledgers
 		rows += st.Rows
+		last := pending[len(pending)-1].Ledger
+		metrics.WrittenLedgers.Add(float64(st.Ledgers))
+		metrics.SkippedLedgers.Add(float64(st.Skipped))
+		metrics.WrittenRows.Add(float64(st.Rows))
+		metrics.Gaps.Add(float64(st.Gaps))
+		metrics.LastWritten.Set(float64(last.Sequence))
+		metrics.CloseLag.Set(time.Since(last.ClosedAt).Seconds())
+		if r.Heartbeat != nil && time.Since(lastBeat) > 5*time.Second {
+			r.Heartbeat(ctx, last.Sequence, r.Tip.Load())
+			lastBeat = time.Now()
+		}
 		if st.Skipped > 0 {
 			r.Log.Debug("skipped already indexed ledgers", "n", st.Skipped)
 		}
@@ -166,15 +198,18 @@ func (r *Runner) runFrom(ctx context.Context, from uint32) (uint32, error) {
 		if err != nil {
 			if ctx.Err() != nil {
 				_ = flush()
-				return seq, nil
+				return seq, nil //nolint:nilerr // shutdown: flush and stop cleanly
 			}
 			if ferr := flush(); ferr != nil {
 				return pendingFrom, errors.Join(err, ferr)
 			}
 			return seq, fmt.Errorf("get ledger %d: %w", seq, err)
 		}
+		metrics.FetchedLedgers.Inc()
+		metrics.FetchLast.Set(float64(seq))
 		res, err := r.Proc.Process(lcm)
 		if err != nil {
+			metrics.ProcessError.Inc()
 			if ferr := flush(); ferr != nil {
 				return pendingFrom, errors.Join(err, ferr)
 			}

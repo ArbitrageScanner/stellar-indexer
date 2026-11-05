@@ -17,6 +17,17 @@ type Batch struct {
 	Trustlines     []Trustline
 	Pools          []Pool
 	Offers         []Offer
+	// Codes are contract executables created or changed in this ledger; the
+	// verifier adds RPC-resolved ones before the batch is written.
+	Codes []ContractCode
+}
+
+// ContractCode is the executable behind a contract instance.
+type ContractCode struct {
+	ContractID string
+	Executable string // wasm | stellar_asset | missing
+	WasmHash   string // hex, for wasm
+	Ledger     uint32 // ledger of the change; 0 when resolved via RPC
 }
 
 type Ledger struct {
@@ -100,6 +111,9 @@ type Trade struct {
 	SoldAmount   string // integer in the token's base units
 	BoughtAsset  string
 	BoughtAmount string
+	// Verified is true for classic venues and for Soroban pools whose code is
+	// allowlisted for the venue's protocol; only verified fills feed prices.
+	Verified bool
 }
 
 type Transfer struct {
@@ -130,6 +144,7 @@ type ContractEvent struct {
 	Topics     []any
 	Data       any
 	Protocol   string
+	Verified   bool
 	Successful bool
 }
 
@@ -148,6 +163,7 @@ type ProtocolEvent struct {
 	Amount0    string
 	Amount1    string
 	Data       any
+	Verified   bool
 }
 
 type Account struct {

@@ -4,6 +4,7 @@ package processor
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -15,6 +16,9 @@ import (
 )
 
 type Options struct {
+	// Codes records contract executables changed in each ledger (input to
+	// protocol verification); State the account/trustline/pool/offer tables.
+	Codes       bool
 	Operations  bool
 	State       bool
 	FeeEvents   bool
@@ -70,10 +74,10 @@ func (p *Processor) Process(lcm xdr.LedgerCloseMeta) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ledger %d: tx reader: %w", seq, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	for {
 		tx, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
@@ -84,7 +88,7 @@ func (p *Processor) Process(lcm xdr.LedgerCloseMeta) (*Result, error) {
 		}
 	}
 
-	if p.opts.State {
+	if p.opts.State || p.opts.Codes {
 		if err := ctx.state(lcm); err != nil {
 			return nil, fmt.Errorf("ledger %d: state: %w", seq, err)
 		}
@@ -250,6 +254,7 @@ func (c *ledgerCtx) classicTrades(hash string, txIndex, opIndex uint32, taker st
 			continue
 		}
 		t := Trade{
+			Verified:     true, // classic order book / AMM fills are protocol-level
 			Ledger:       c.seq,
 			TxHash:       hash,
 			TxIndex:      txIndex,

@@ -1,12 +1,37 @@
--- Stellar analytics indexer schema (idempotent).
+-- 0001: baseline schema. Append-only fact tables are RANGE-partitioned by
+-- ledger; partitions are created ahead of the writer and dropped whole by
+-- retention (see partitions.go). State tables are small and unpartitioned.
 
-CREATE TABLE IF NOT EXISTS cursors (
+CREATE TABLE meta (
+    key    text PRIMARY KEY,
+    value  text NOT NULL
+);
+
+CREATE TABLE cursors (
     name        text PRIMARY KEY,
     ledger      bigint NOT NULL,
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS ledgers (
+-- Heartbeats of pipeline components (fetcher, writer) for /status and /ready.
+CREATE TABLE components (
+    name        text PRIMARY KEY,
+    role        text NOT NULL,
+    ledger      bigint,
+    tip         bigint,
+    info        jsonb NOT NULL DEFAULT '{}',
+    updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Ranges the writer never received (downtime longer than the RPC window).
+CREATE TABLE ledger_gaps (
+    from_ledger  bigint PRIMARY KEY,
+    to_ledger    bigint NOT NULL,
+    reason       text NOT NULL,
+    detected_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE ledgers (
     sequence          bigint PRIMARY KEY,
     hash              text NOT NULL,
     prev_hash         text NOT NULL,
@@ -23,10 +48,15 @@ CREATE TABLE IF NOT EXISTS ledgers (
     fee_pool          bigint NOT NULL,
     fees_charged      bigint NOT NULL
 );
-CREATE INDEX IF NOT EXISTS ledgers_closed_at ON ledgers (closed_at);
+CREATE INDEX ledgers_closed_at ON ledgers (closed_at);
 
-CREATE TABLE IF NOT EXISTS transactions (
-    hash          text PRIMARY KEY,
+-- Analytics windows are anchored to the newest indexed ledger, not the wall
+-- clock, so a paused or lagging indexer still answers "last 24h" correctly.
+CREATE FUNCTION index_now() RETURNS timestamptz LANGUAGE sql STABLE AS
+    $$ SELECT coalesce(max(closed_at), now()) FROM ledgers $$;
+
+CREATE TABLE transactions (
+    hash          text NOT NULL,
     ledger        bigint NOT NULL,
     tx_index      int NOT NULL,
     id            bigint NOT NULL,
@@ -46,14 +76,18 @@ CREATE TABLE IF NOT EXISTS transactions (
     function      text,
     resource_fee  bigint NOT NULL DEFAULT 0,
     instructions  bigint NOT NULL DEFAULT 0,
-    inner_hash    text
-);
-CREATE INDEX IF NOT EXISTS transactions_ledger ON transactions (ledger, tx_index);
-CREATE INDEX IF NOT EXISTS transactions_source ON transactions (source, id DESC);
-CREATE INDEX IF NOT EXISTS transactions_contract ON transactions (contract_id, id DESC) WHERE contract_id IS NOT NULL;
+    inner_hash    text,
+    PRIMARY KEY (hash, ledger)
+) PARTITION BY RANGE (ledger);
+CREATE INDEX transactions_ledger ON transactions (ledger, tx_index);
+CREATE INDEX transactions_id ON transactions (id DESC);
+CREATE INDEX transactions_source ON transactions (source, id DESC);
+CREATE INDEX transactions_fee_account ON transactions (fee_account, ledger);
+CREATE INDEX transactions_contract ON transactions (contract_id, id DESC) WHERE contract_id IS NOT NULL;
+CREATE INDEX transactions_inner_hash ON transactions (inner_hash) WHERE inner_hash IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS operations (
-    id           bigint PRIMARY KEY,
+CREATE TABLE operations (
+    id           bigint NOT NULL,
     tx_hash      text NOT NULL,
     ledger       bigint NOT NULL,
     tx_index     int NOT NULL,
@@ -63,13 +97,15 @@ CREATE TABLE IF NOT EXISTS operations (
     source       text NOT NULL,
     successful   boolean NOT NULL,
     result_code  text NOT NULL,
-    details      jsonb NOT NULL
-);
-CREATE INDEX IF NOT EXISTS operations_tx ON operations (tx_hash);
-CREATE INDEX IF NOT EXISTS operations_source ON operations (source, id DESC);
-CREATE INDEX IF NOT EXISTS operations_type ON operations (type, ledger);
+    details      jsonb NOT NULL,
+    PRIMARY KEY (id, ledger)
+) PARTITION BY RANGE (ledger);
+CREATE INDEX operations_id ON operations (id DESC);
+CREATE INDEX operations_tx ON operations (tx_hash);
+CREATE INDEX operations_source ON operations (source, id DESC);
+CREATE INDEX operations_type ON operations (type, id DESC);
 
-CREATE TABLE IF NOT EXISTS assets (
+CREATE TABLE assets (
     asset_key    text PRIMARY KEY,
     type         text NOT NULL,
     code         text,
@@ -77,10 +113,13 @@ CREATE TABLE IF NOT EXISTS assets (
     contract_id  text,
     first_seen   bigint NOT NULL
 );
-CREATE INDEX IF NOT EXISTS assets_contract ON assets (contract_id);
-CREATE INDEX IF NOT EXISTS assets_code ON assets (code);
+CREATE INDEX assets_contract ON assets (contract_id);
+CREATE INDEX assets_code ON assets (code);
+CREATE INDEX assets_issuer ON assets (issuer);
 
-CREATE TABLE IF NOT EXISTS trades (
+-- verified = classic venue, or a Soroban pool whose code is allowlisted for
+-- the protocol. Only verified fills feed candles and prices.
+CREATE TABLE trades (
     ledger         bigint NOT NULL,
     tx_index       int NOT NULL,
     op_index       int NOT NULL,
@@ -100,16 +139,17 @@ CREATE TABLE IF NOT EXISTS trades (
     price          double precision NOT NULL,
     base_volume    double precision NOT NULL,
     counter_volume double precision NOT NULL,
+    verified       boolean NOT NULL,
     PRIMARY KEY (ledger, tx_index, op_index, trade_index)
-);
-CREATE INDEX IF NOT EXISTS trades_pair ON trades (base, counter, closed_at DESC);
-CREATE INDEX IF NOT EXISTS trades_closed ON trades (closed_at DESC);
-CREATE INDEX IF NOT EXISTS trades_taker ON trades (taker, closed_at DESC);
-CREATE INDEX IF NOT EXISTS trades_venue ON trades (venue, closed_at DESC);
+) PARTITION BY RANGE (ledger);
+CREATE INDEX trades_pair ON trades (base, counter, closed_at DESC);
+CREATE INDEX trades_closed ON trades (closed_at DESC);
+CREATE INDEX trades_taker ON trades (taker, closed_at DESC);
+CREATE INDEX trades_venue ON trades (venue, closed_at DESC);
+CREATE INDEX trades_tx ON trades (tx_hash);
 
--- 1-minute OHLCV per canonical pair (base < counter). Larger intervals are
--- rolled up at query time.
-CREATE TABLE IF NOT EXISTS candles_1m (
+-- 1-minute OHLCV per canonical pair (base < counter), verified fills only.
+CREATE TABLE candles_1m (
     base            text NOT NULL,
     counter         text NOT NULL,
     bucket          timestamptz NOT NULL,
@@ -122,9 +162,10 @@ CREATE TABLE IF NOT EXISTS candles_1m (
     trades          int NOT NULL,
     PRIMARY KEY (base, counter, bucket)
 );
-CREATE INDEX IF NOT EXISTS candles_bucket ON candles_1m (bucket DESC);
+CREATE INDEX candles_bucket ON candles_1m (bucket DESC);
+CREATE INDEX candles_counter ON candles_1m (counter, bucket DESC);
 
-CREATE TABLE IF NOT EXISTS transfers (
+CREATE TABLE transfers (
     ledger          bigint NOT NULL,
     tx_index        int NOT NULL,
     transfer_index  int NOT NULL,
@@ -138,12 +179,13 @@ CREATE TABLE IF NOT EXISTS transfers (
     contract_id     text,
     amount          numeric NOT NULL,
     PRIMARY KEY (ledger, tx_index, transfer_index)
-);
-CREATE INDEX IF NOT EXISTS transfers_from ON transfers (from_addr, ledger DESC);
-CREATE INDEX IF NOT EXISTS transfers_to ON transfers (to_addr, ledger DESC);
-CREATE INDEX IF NOT EXISTS transfers_asset ON transfers (asset, closed_at DESC);
+) PARTITION BY RANGE (ledger);
+CREATE INDEX transfers_from ON transfers (from_addr, ledger DESC);
+CREATE INDEX transfers_to ON transfers (to_addr, ledger DESC);
+CREATE INDEX transfers_asset ON transfers (asset, closed_at DESC);
+CREATE INDEX transfers_tx ON transfers (tx_hash);
 
-CREATE TABLE IF NOT EXISTS contract_events (
+CREATE TABLE contract_events (
     ledger       bigint NOT NULL,
     tx_index     int NOT NULL,
     op_index     int NOT NULL,
@@ -155,13 +197,16 @@ CREATE TABLE IF NOT EXISTS contract_events (
     topics       jsonb NOT NULL,
     data         jsonb,
     protocol     text,
+    verified     boolean NOT NULL DEFAULT false,
     successful   boolean NOT NULL,
     PRIMARY KEY (ledger, tx_index, op_index, event_index)
-);
-CREATE INDEX IF NOT EXISTS contract_events_contract ON contract_events (contract_id, ledger DESC);
-CREATE INDEX IF NOT EXISTS contract_events_topic0 ON contract_events (topic0, ledger DESC);
+) PARTITION BY RANGE (ledger);
+CREATE INDEX contract_events_contract ON contract_events (contract_id, ledger DESC);
+CREATE INDEX contract_events_topic0 ON contract_events (topic0, ledger DESC);
+CREATE INDEX contract_events_tx ON contract_events (tx_hash);
+CREATE INDEX contract_events_closed ON contract_events (closed_at DESC);
 
-CREATE TABLE IF NOT EXISTS protocol_events (
+CREATE TABLE protocol_events (
     ledger       bigint NOT NULL,
     tx_index     int NOT NULL,
     op_index     int NOT NULL,
@@ -176,14 +221,28 @@ CREATE TABLE IF NOT EXISTS protocol_events (
     amount0      numeric,
     amount1      numeric,
     data         jsonb,
+    verified     boolean NOT NULL,
     PRIMARY KEY (ledger, tx_index, op_index, event_index)
+) PARTITION BY RANGE (ledger);
+CREATE INDEX protocol_events_proto ON protocol_events (protocol, action, closed_at DESC);
+CREATE INDEX protocol_events_user ON protocol_events (user_addr, closed_at DESC);
+CREATE INDEX protocol_events_contract ON protocol_events (contract_id, closed_at DESC);
+CREATE INDEX protocol_events_closed ON protocol_events (closed_at DESC);
+CREATE INDEX protocol_events_tx ON protocol_events (tx_hash);
+
+-- Executable of every contract seen with protocol-shaped events: the input to
+-- protocol verification (wasm hash allowlists).
+CREATE TABLE contract_code (
+    contract_id  text PRIMARY KEY,
+    executable   text NOT NULL,      -- wasm | stellar_asset | missing
+    wasm_hash    text,
+    ledger       bigint NOT NULL,    -- ledger of the change (0 = resolved via RPC)
+    checked_at   timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS protocol_events_proto ON protocol_events (protocol, action, closed_at DESC);
-CREATE INDEX IF NOT EXISTS protocol_events_user ON protocol_events (user_addr, closed_at DESC);
-CREATE INDEX IF NOT EXISTS protocol_events_contract ON protocol_events (contract_id, closed_at DESC);
+CREATE INDEX contract_code_wasm ON contract_code (wasm_hash);
 
 -- Current state of entries touched since indexing began (not a full snapshot).
-CREATE TABLE IF NOT EXISTS accounts (
+CREATE TABLE accounts (
     account_id      text PRIMARY KEY,
     balance         bigint NOT NULL,
     buying_liab     bigint NOT NULL,
@@ -200,9 +259,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     last_modified   bigint NOT NULL,
     deleted         boolean NOT NULL DEFAULT false
 );
-CREATE INDEX IF NOT EXISTS accounts_balance ON accounts (balance DESC) WHERE NOT deleted;
+CREATE INDEX accounts_balance ON accounts (balance DESC) WHERE NOT deleted;
 
-CREATE TABLE IF NOT EXISTS trustlines (
+CREATE TABLE trustlines (
     account_id     text NOT NULL,
     asset          text NOT NULL,
     balance        bigint NOT NULL,
@@ -213,9 +272,9 @@ CREATE TABLE IF NOT EXISTS trustlines (
     last_modified  bigint NOT NULL,
     PRIMARY KEY (account_id, asset)
 );
-CREATE INDEX IF NOT EXISTS trustlines_asset ON trustlines (asset, balance DESC);
+CREATE INDEX trustlines_asset ON trustlines (asset, balance DESC);
 
-CREATE TABLE IF NOT EXISTS liquidity_pools (
+CREATE TABLE liquidity_pools (
     pool_id          text PRIMARY KEY,
     asset_a          text NOT NULL,
     asset_b          text NOT NULL,
@@ -228,7 +287,7 @@ CREATE TABLE IF NOT EXISTS liquidity_pools (
     deleted          boolean NOT NULL DEFAULT false
 );
 
-CREATE TABLE IF NOT EXISTS offers (
+CREATE TABLE offers (
     offer_id       bigint PRIMARY KEY,
     seller         text NOT NULL,
     selling        text NOT NULL,
@@ -240,14 +299,15 @@ CREATE TABLE IF NOT EXISTS offers (
     passive        boolean NOT NULL,
     last_modified  bigint NOT NULL
 );
-CREATE INDEX IF NOT EXISTS offers_pair ON offers (selling, buying, price);
+CREATE INDEX offers_pair ON offers (selling, buying, price);
+CREATE INDEX offers_seller ON offers (seller);
 
--- User-defined address labels (tags), written through the API.
-CREATE TABLE IF NOT EXISTS labels (
+-- User-defined address labels, written through the API.
+CREATE TABLE labels (
     address     text NOT NULL,
     tag         text NOT NULL,
     note        text NOT NULL DEFAULT '',
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (address, tag)
 );
-CREATE INDEX IF NOT EXISTS labels_tag ON labels (tag);
+CREATE INDEX labels_tag ON labels (tag);

@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"sync"
 
-	assetProto "github.com/stellar/go-stellar-sdk/asset"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
@@ -16,19 +15,6 @@ func AssetKey(a xdr.Asset) string {
 		return NativeKey
 	}
 	return a.StringCanonical()
-}
-
-func protoAssetKey(a *assetProto.Asset) string {
-	if a == nil {
-		return ""
-	}
-	if a.GetNative() {
-		return NativeKey
-	}
-	if ia := a.GetIssuedAsset(); ia != nil {
-		return ia.AssetCode + ":" + ia.Issuer
-	}
-	return ""
 }
 
 func trustLineAssetKey(a xdr.TrustLineAsset) string {

@@ -1,7 +1,9 @@
-// Package config loads indexer settings from environment variables.
+// Package config loads indexer settings from environment variables and
+// validates them once at startup.
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -17,37 +19,60 @@ type Config struct {
 	RPCURL            string
 	DatabaseURL       string
 
-	// StartLedger is the first ledger to ingest when no cursor exists.
-	// Accepted forms: "" / "latest" (tip), "oldest" (start of RPC retention),
-	// "-N" (N ledgers behind tip), or an absolute sequence.
+	// StartLedger is used only when there is nothing to resume from (empty
+	// topic and DB): "latest" (default: index from launch), "oldest", "-N",
+	// or an absolute sequence.
 	StartLedger string
-	// EndLedger stops ingestion after this ledger; 0 means tail forever.
-	EndLedger uint32
-	// ForceStart ignores the stored cursor and starts from StartLedger.
-	ForceStart bool
+	EndLedger   uint32 // stop after this ledger (direct mode); 0 = tail forever
+	ForceStart  bool   // direct mode: ignore the stored cursor
 
-	// CommitEvery groups this many ledgers into a single DB transaction while
-	// backfilling. In live mode every ledger is committed immediately.
-	CommitEvery int
+	CommitEvery int // ledgers per DB transaction while catching up
 	RPCBuffer   uint32
 
-	IndexFeeEvents bool // store per-tx fee token events (large volume)
+	IndexFeeEvents bool
 	IndexOps       bool
-	IndexState     bool // accounts / trustlines / pools / offers
+	IndexState     bool
 	IndexFailedTxs bool
 
 	// Retention in ledgers behind the cursor (0 = keep forever).
-	RetainRaw     uint32
-	RetainMarkets uint32
-	RetainCandles uint32
-	PruneEvery    time.Duration
+	RetainRaw        uint32
+	RetainMarkets    uint32
+	RetainCandles    uint32
+	PruneEvery       time.Duration
+	PartitionLedgers int64
 
+	// Queue (fetch/write split). Empty brokers = `run` uses the direct pipeline.
+	KafkaBrokers        []string
+	KafkaTopic          string
+	KafkaGroup          string
+	KafkaRetention      time.Duration
+	KafkaRetentionBytes int64
+	KafkaReplication    int16
+
+	// Protocol verification.
+	VerifyProtocols bool
+	AllowlistFile   string
+
+	// HTTP API.
 	HTTPAddr     string
-	UI           bool   // serve the embedded explorer at /ui/
-	UIDir        string // serve the explorer from this directory instead (development)
-	USDAsset     string // asset that prices XLM in USD (default: USDC of the network)
-	LabelsToken  string // bearer token required for label writes (empty = open)
+	MetricsAddr  string // fetch/write processes; the API serves /metrics itself
+	UI           bool
+	UIDir        string
+	USDAsset     string
+	LabelsToken  string
+	LabelsOpen   bool
+	APIKeys      []string
+	CORSOrigins  []string
+	RateRPS      float64
+	RateBurst    int
+	TrustProxy   bool
+	CacheTTL     time.Duration
+	ReadyMaxLag  time.Duration
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+
 	LogLevel     string
+	LogFormat    string // text | json
 	RPCTimeout   time.Duration
 	CursorName   string
 	MaxRetries   int
@@ -56,42 +81,65 @@ type Config struct {
 
 func Load() (Config, error) {
 	c := Config{
-		Network:        env("STELLAR_NETWORK", "testnet"),
-		RPCURL:         os.Getenv("STELLAR_RPC_URL"),
-		DatabaseURL:    env("DATABASE_URL", "postgres://indexer:indexer@localhost:5432/indexer?sslmode=disable"),
-		StartLedger:    env("START_LEDGER", "-100"),
-		CommitEvery:    envInt("COMMIT_EVERY", 20),
-		RPCBuffer:      uint32(envInt("RPC_BUFFER", 0)),
-		IndexFeeEvents: envBool("INDEX_FEE_EVENTS", false),
-		IndexOps:       envBool("INDEX_OPERATIONS", true),
-		IndexState:     envBool("INDEX_STATE", true),
-		IndexFailedTxs: envBool("INDEX_FAILED_TXS", true),
-		RetainRaw:      uint32(envInt("RETAIN_RAW_LEDGERS", 0)),
-		RetainMarkets:  uint32(envInt("RETAIN_MARKET_LEDGERS", 0)),
-		RetainCandles:  uint32(envInt("RETAIN_CANDLE_LEDGERS", 0)),
-		PruneEvery:     envDuration("PRUNE_INTERVAL", 5*time.Minute),
-		ForceStart:     envBool("FORCE_START", false),
-		HTTPAddr:       env("HTTP_ADDR", ":8080"),
-		UI:             envBool("UI_ENABLED", true),
-		UIDir:          os.Getenv("UI_DIR"),
-		USDAsset:       os.Getenv("USD_ASSET"),
-		LabelsToken:    os.Getenv("LABELS_TOKEN"),
-		LogLevel:       env("LOG_LEVEL", "info"),
-		RPCTimeout:     envDuration("RPC_TIMEOUT", 60*time.Second),
-		CursorName:     env("CURSOR_NAME", "main"),
-		MaxRetries:     envInt("MAX_RETRIES", 0),
-		RetryBackoff:   envDuration("RETRY_BACKOFF", 3*time.Second),
+		Network:             env("STELLAR_NETWORK", "testnet"),
+		RPCURL:              os.Getenv("STELLAR_RPC_URL"),
+		DatabaseURL:         env("DATABASE_URL", "postgres://indexer:indexer@localhost:5432/indexer?sslmode=disable"),
+		StartLedger:         env("START_LEDGER", "latest"),
+		CommitEvery:         envInt("COMMIT_EVERY", 20),
+		RPCBuffer:           uint32(envInt("RPC_BUFFER", 0)),
+		IndexFeeEvents:      envBool("INDEX_FEE_EVENTS", false),
+		IndexOps:            envBool("INDEX_OPERATIONS", true),
+		IndexState:          envBool("INDEX_STATE", true),
+		IndexFailedTxs:      envBool("INDEX_FAILED_TXS", true),
+		RetainRaw:           uint32(envInt("RETAIN_RAW_LEDGERS", 0)),
+		RetainMarkets:       uint32(envInt("RETAIN_MARKET_LEDGERS", 0)),
+		RetainCandles:       uint32(envInt("RETAIN_CANDLE_LEDGERS", 0)),
+		PruneEvery:          envDuration("PRUNE_INTERVAL", 5*time.Minute),
+		PartitionLedgers:    int64(envInt("PARTITION_LEDGERS", 20000)),
+		KafkaBrokers:        envList("KAFKA_BROKERS", nil),
+		KafkaTopic:          os.Getenv("KAFKA_TOPIC"),
+		KafkaGroup:          env("KAFKA_GROUP", "stellar-indexer-writer"),
+		KafkaRetention:      envDuration("KAFKA_RETENTION", 24*time.Hour),
+		KafkaRetentionBytes: int64(envInt("KAFKA_RETENTION_BYTES", 0)),
+		KafkaReplication:    int16(envInt("KAFKA_REPLICATION", 1)),
+		VerifyProtocols:     env("PROTOCOL_VERIFY", "enforce") != "off",
+		AllowlistFile:       os.Getenv("PROTOCOL_ALLOWLIST_FILE"),
+		ForceStart:          envBool("FORCE_START", false),
+		HTTPAddr:            env("HTTP_ADDR", ":8080"),
+		MetricsAddr:         env("METRICS_ADDR", ":9100"),
+		UI:                  envBool("UI_ENABLED", true),
+		UIDir:               os.Getenv("UI_DIR"),
+		USDAsset:            os.Getenv("USD_ASSET"),
+		LabelsToken:         os.Getenv("LABELS_TOKEN"),
+		LabelsOpen:          envBool("LABELS_OPEN", false),
+		APIKeys:             envList("API_KEYS", nil),
+		CORSOrigins:         envList("CORS_ORIGINS", []string{"*"}),
+		RateRPS:             envFloat("RATE_LIMIT_RPS", 20),
+		RateBurst:           envInt("RATE_LIMIT_BURST", 40),
+		TrustProxy:          envBool("TRUST_PROXY", false),
+		CacheTTL:            envDuration("CACHE_TTL", 10*time.Second),
+		ReadyMaxLag:         envDuration("READY_MAX_LAG", 2*time.Minute),
+		ReadTimeout:         envDuration("HTTP_READ_TIMEOUT", 15*time.Second),
+		WriteTimeout:        envDuration("HTTP_WRITE_TIMEOUT", 60*time.Second),
+		LogLevel:            env("LOG_LEVEL", "info"),
+		LogFormat:           env("LOG_FORMAT", "text"),
+		RPCTimeout:          envDuration("RPC_TIMEOUT", 60*time.Second),
+		CursorName:          env("CURSOR_NAME", "main"),
+		MaxRetries:          envInt("MAX_RETRIES", 0),
+		RetryBackoff:        envDuration("RETRY_BACKOFF", 3*time.Second),
 	}
+	var errs []error
 	if v := os.Getenv("END_LEDGER"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
-			return c, fmt.Errorf("END_LEDGER: %w", err)
+			errs = append(errs, fmt.Errorf("END_LEDGER: %w", err))
 		}
 		c.EndLedger = uint32(n)
 	}
 
 	switch strings.ToLower(c.Network) {
 	case "testnet":
+		c.Network = "testnet"
 		c.NetworkPassphrase = network.TestNetworkPassphrase
 		if c.RPCURL == "" {
 			c.RPCURL = "https://soroban-testnet.stellar.org"
@@ -111,7 +159,7 @@ func Load() (Config, error) {
 	default:
 		c.NetworkPassphrase = os.Getenv("NETWORK_PASSPHRASE")
 		if c.NetworkPassphrase == "" || c.RPCURL == "" {
-			return c, fmt.Errorf("custom network %q requires NETWORK_PASSPHRASE and STELLAR_RPC_URL", c.Network)
+			errs = append(errs, fmt.Errorf("custom network %q requires NETWORK_PASSPHRASE and STELLAR_RPC_URL", c.Network))
 		}
 	}
 	if p := os.Getenv("NETWORK_PASSPHRASE"); p != "" {
@@ -124,10 +172,43 @@ func Load() (Config, error) {
 			c.RPCBuffer = 10
 		}
 	}
-	if c.CommitEvery < 1 {
-		c.CommitEvery = 1
+	if c.KafkaTopic == "" {
+		c.KafkaTopic = "stellar." + c.Network + ".ledgers"
 	}
-	return c, nil
+	if c.CommitEvery < 1 {
+		errs = append(errs, errors.New("COMMIT_EVERY must be >= 1"))
+	}
+	if c.PartitionLedgers < 100 {
+		errs = append(errs, errors.New("PARTITION_LEDGERS must be >= 100"))
+	}
+	if c.RetainRaw > 0 && int64(c.RetainRaw) < c.PartitionLedgers {
+		errs = append(errs, fmt.Errorf("RETAIN_RAW_LEDGERS (%d) below PARTITION_LEDGERS (%d) cannot be honoured: retention drops whole partitions", c.RetainRaw, c.PartitionLedgers))
+	}
+	if c.RateRPS < 0 || c.RateBurst < 0 {
+		errs = append(errs, errors.New("RATE_LIMIT_RPS and RATE_LIMIT_BURST must be >= 0"))
+	}
+	if c.LogFormat != "text" && c.LogFormat != "json" {
+		errs = append(errs, fmt.Errorf("LOG_FORMAT must be text or json, got %q", c.LogFormat))
+	}
+	if v := env("PROTOCOL_VERIFY", "enforce"); v != "enforce" && v != "off" {
+		errs = append(errs, fmt.Errorf("PROTOCOL_VERIFY must be enforce or off, got %q", v))
+	}
+	return c, errors.Join(errs...)
+}
+
+// Redacted returns the settings safe to log (no credentials).
+func (c Config) Redacted() map[string]any {
+	db := c.DatabaseURL
+	if i := strings.Index(db, "@"); i > 0 {
+		if j := strings.Index(db, "://"); j > 0 && j < i {
+			db = db[:j+3] + "***" + db[i:]
+		}
+	}
+	return map[string]any{
+		"network": c.Network, "rpc": c.RPCURL, "db": db, "kafka": c.KafkaBrokers, "topic": c.KafkaTopic,
+		"verify": c.VerifyProtocols, "partition_ledgers": c.PartitionLedgers, "api_keys": len(c.APIKeys),
+		"labels_token": c.LabelsToken != "", "labels_open": c.LabelsOpen, "rate_rps": c.RateRPS,
+	}
 }
 
 func env(k, def string) string {
@@ -140,6 +221,15 @@ func env(k, def string) string {
 func envInt(k string, def int) int {
 	if v := os.Getenv(k); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envFloat(k string, def float64) float64 {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil {
 			return n
 		}
 	}
@@ -162,4 +252,18 @@ func envDuration(k string, def time.Duration) time.Duration {
 		}
 	}
 	return def
+}
+
+func envList(k string, def []string) []string {
+	v := os.Getenv(k)
+	if v == "" {
+		return def
+	}
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }

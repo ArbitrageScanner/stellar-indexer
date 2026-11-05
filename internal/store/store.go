@@ -3,7 +3,6 @@ package store
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,11 +17,13 @@ import (
 	"github.com/ArbitrageScanner/stellar-indexer/internal/processor"
 )
 
-//go:embed schema.sql
-var schema string
-
 type Store struct {
 	Pool *pgxpool.Pool
+	// PartitionLedgers is the ledger-range size used when the partition layout
+	// is first created (later runs reuse the stored value).
+	PartitionLedgers int64
+
+	parts partitions
 }
 
 func Open(ctx context.Context, url string) (*Store, error) {
@@ -38,18 +39,13 @@ func Open(ctx context.Context, url string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	return &Store{Pool: pool}, nil
+	return &Store{Pool: pool, parts: partitions{have: map[int64]bool{}}}, nil
 }
 
 func (s *Store) Close() { s.Pool.Close() }
 
-func (s *Store) Migrate(ctx context.Context) error {
-	// Serialise concurrent migrations from api + ingest processes.
-	_, err := s.Pool.Exec(ctx, "SELECT pg_advisory_lock(727001); "+schema+"; SELECT pg_advisory_unlock(727001);")
-	return err
-}
-
 // Cursor returns the last fully indexed ledger, or 0 when none.
+// (A cursor row with ledger 0 exists while the first batch is in flight.)
 func (s *Store) Cursor(ctx context.Context, name string) (uint32, error) {
 	var l int64
 	err := s.Pool.QueryRow(ctx, "SELECT ledger FROM cursors WHERE name=$1", name).Scan(&l)
@@ -80,24 +76,74 @@ func (s *Store) LoadAssets(ctx context.Context, reg *processor.Registry) (int, e
 
 // WriteStats reports what a write did.
 type WriteStats struct {
-	Ledgers, Skipped, Rows int
+	Ledgers, Skipped, Rows, Gaps int
 }
 
+// ErrChainMismatch means a ledger's prev_hash does not match the stored hash
+// of its predecessor: the source served inconsistent data. Stellar has no
+// reorgs, so this is never retried automatically.
+var ErrChainMismatch = errors.New("ledger chain mismatch")
+
 // Write stores batches (ascending ledgers) and advances the cursor in one
-// transaction. Ledgers already present are skipped, which keeps re-runs over
-// an indexed range from double-counting candle volume.
+// transaction, so a crash at any point leaves either all or none of a batch.
+// It is idempotent: ledgers already present are skipped, which keeps
+// redelivered queue records and re-runs from double-counting candle volume.
+// Each new ledger must chain onto its stored predecessor (ErrChainMismatch
+// otherwise); ranges that were never received are recorded in ledger_gaps.
 func (s *Store) Write(ctx context.Context, cursor string, batches []*processor.Batch) (WriteStats, error) {
 	var st WriteStats
 	if len(batches) == 0 {
 		return st, nil
 	}
+	// Partition DDL runs outside the write transaction; ledgers at or below
+	// the cursor are skipped below, so their (possibly dropped) ranges are not
+	// recreated.
+	done, err := s.Cursor(ctx, cursor)
+	if err != nil {
+		return st, err
+	}
+	for _, b := range []*processor.Batch{batches[0], batches[len(batches)-1]} {
+		if b.Ledger.Sequence > done {
+			if err := s.EnsurePartitions(ctx, max(b.Ledger.Sequence, done+1)); err != nil {
+				return st, err
+			}
+		}
+	}
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return st, err
 	}
-	defer tx.Rollback(ctx)
+	defer tx.Rollback(ctx) //nolint:errcheck
 
+	// Lock the cursor row: a second writer on the same cursor serialises here.
+	var cur int64
+	if _, err := tx.Exec(ctx, `INSERT INTO cursors (name, ledger) VALUES ($1, 0) ON CONFLICT (name) DO NOTHING`, cursor); err != nil {
+		return st, err
+	}
+	if err := tx.QueryRow(ctx, `SELECT ledger FROM cursors WHERE name = $1 FOR UPDATE`, cursor).Scan(&cur); err != nil {
+		return st, err
+	}
+	prevHash := map[uint32]string{}
 	for _, b := range batches {
+		seq := b.Ledger.Sequence
+		// Everything at or below the cursor was committed earlier (or pruned
+		// since): redelivery is a no-op.
+		if int64(seq) <= cur {
+			st.Skipped++
+			continue
+		}
+		if err := checkChain(ctx, tx, b.Ledger, prevHash); err != nil {
+			return st, err
+		}
+		if cur > 0 && int64(seq) > cur+1 {
+			if _, err := tx.Exec(ctx, `INSERT INTO ledger_gaps (from_ledger, to_ledger, reason) VALUES ($1, $2, $3)
+				ON CONFLICT (from_ledger) DO NOTHING`, cur+1, int64(seq)-1, "ledgers never received (source outage longer than RPC retention?)"); err != nil {
+				return st, err
+			}
+			st.Gaps++
+		}
+		cur = int64(seq)
+		prevHash[seq] = b.Ledger.Hash
 		ok, err := insertLedger(ctx, tx, b.Ledger)
 		if err != nil {
 			return st, fmt.Errorf("ledger %d: %w", b.Ledger.Sequence, err)
@@ -113,13 +159,63 @@ func (s *Store) Write(ctx context.Context, cursor string, batches []*processor.B
 		st.Ledgers++
 		st.Rows += n
 	}
-	last := batches[len(batches)-1].Ledger.Sequence
-	_, err = tx.Exec(ctx, `INSERT INTO cursors (name, ledger, updated_at) VALUES ($1,$2,now())
-		ON CONFLICT (name) DO UPDATE SET ledger=GREATEST(cursors.ledger, EXCLUDED.ledger), updated_at=now()`, cursor, int64(last))
-	if err != nil {
+	last := batches[len(batches)-1].Ledger
+	if _, err = tx.Exec(ctx, `UPDATE cursors SET ledger = GREATEST(ledger, $2), updated_at = now() WHERE name = $1`, cursor, int64(last.Sequence)); err != nil {
+		return st, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO components (name, role, ledger, info, updated_at) VALUES ($1, 'writer', $2, $3, now())
+		ON CONFLICT (name) DO UPDATE SET ledger = GREATEST(components.ledger, EXCLUDED.ledger), info = EXCLUDED.info, updated_at = now()`,
+		"writer:"+cursor, int64(last.Sequence), jsonb(map[string]any{"closed_at": last.ClosedAt, "ledgers": st.Ledgers, "skipped": st.Skipped})); err != nil {
 		return st, err
 	}
 	return st, tx.Commit(ctx)
+}
+
+// checkChain verifies l.PrevHash against the predecessor written earlier in
+// this transaction or stored in the table.
+func checkChain(ctx context.Context, tx pgx.Tx, l processor.Ledger, inBatch map[uint32]string) error {
+	want, ok := inBatch[l.Sequence-1]
+	if !ok {
+		err := tx.QueryRow(ctx, `SELECT hash FROM ledgers WHERE sequence = $1`, int64(l.Sequence)-1).Scan(&want)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil // first ledger, or predecessor never received / pruned
+		}
+		if err != nil {
+			return err
+		}
+	}
+	if want != l.PrevHash {
+		return fmt.Errorf("%w: ledger %d prev_hash %s, stored ledger %d hash %s", ErrChainMismatch, l.Sequence, l.PrevHash, l.Sequence-1, want)
+	}
+	return nil
+}
+
+// Heartbeat records a pipeline component's progress for /status and /ready.
+func (s *Store) Heartbeat(ctx context.Context, name, role string, ledger, tip uint32, info map[string]any) error {
+	_, err := s.Pool.Exec(ctx, `INSERT INTO components (name, role, ledger, tip, info, updated_at) VALUES ($1, $2, $3, $4, $5, now())
+		ON CONFLICT (name) DO UPDATE SET role = EXCLUDED.role, ledger = EXCLUDED.ledger, tip = EXCLUDED.tip, info = EXCLUDED.info, updated_at = now()`,
+		name, role, int64(ledger), int64(tip), jsonb(info))
+	return err
+}
+
+// LoadCodes returns the persisted contract executables (verifier cache).
+func (s *Store) LoadCodes(ctx context.Context) ([]processor.ContractCode, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT contract_id, executable, coalesce(wasm_hash, ''), ledger FROM contract_code`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []processor.ContractCode
+	for rows.Next() {
+		var c processor.ContractCode
+		var l int64
+		if err := rows.Scan(&c.ContractID, &c.Executable, &c.WasmHash, &l); err != nil {
+			return nil, err
+		}
+		c.Ledger = uint32(l)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 func insertLedger(ctx context.Context, tx pgx.Tx, l processor.Ledger) (bool, error) {
@@ -170,12 +266,12 @@ func writeBatch(ctx context.Context, tx pgx.Tx, b *processor.Batch) (int, error)
 
 	if err := copyRows("trades", []string{"ledger", "tx_index", "op_index", "trade_index", "tx_hash", "closed_at", "venue", "pool",
 		"maker", "taker", "sold_asset", "sold_amount", "bought_asset", "bought_amount", "base", "counter", "price",
-		"base_volume", "counter_volume"}, len(b.Trades), func(i int) []any {
+		"base_volume", "counter_volume", "verified"}, len(b.Trades), func(i int) []any {
 		t := b.Trades[i]
 		tk, _ := processor.TickOf(t)
 		return []any{int64(t.Ledger), int32(t.TxIndex), int32(t.OpIndex), int32(t.Index), t.TxHash, t.ClosedAt, t.Venue, t.Pool,
 			t.Maker, t.Taker, t.SoldAsset, num(t.SoldAmount), t.BoughtAsset, num(t.BoughtAmount), tk.Base, tk.Counter, tk.Price,
-			tk.BaseVol, tk.CountVol}
+			tk.BaseVol, tk.CountVol, t.Verified}
 	}); err != nil {
 		return total, err
 	}
@@ -194,19 +290,19 @@ func writeBatch(ctx context.Context, tx pgx.Tx, b *processor.Batch) (int, error)
 	}
 
 	if err := copyRows("contract_events", []string{"ledger", "tx_index", "op_index", "event_index", "tx_hash", "closed_at",
-		"contract_id", "topic0", "topics", "data", "protocol", "successful"}, len(b.ContractEvents), func(i int) []any {
+		"contract_id", "topic0", "topics", "data", "protocol", "verified", "successful"}, len(b.ContractEvents), func(i int) []any {
 		e := b.ContractEvents[i]
 		return []any{int64(e.Ledger), int32(e.TxIndex), int32(e.OpIndex), int32(e.Index), e.TxHash, e.ClosedAt, e.ContractID,
-			sanitize(e.Topic0), jsonb(e.Topics), jsonb(e.Data), null(e.Protocol), e.Successful}
+			sanitize(e.Topic0), jsonb(e.Topics), jsonb(e.Data), null(e.Protocol), e.Verified, e.Successful}
 	}); err != nil {
 		return total, err
 	}
 
 	if err := copyRows("protocol_events", []string{"ledger", "tx_index", "op_index", "event_index", "tx_hash", "closed_at",
-		"protocol", "contract_id", "action", "user_addr", "asset", "amount0", "amount1", "data"}, len(b.ProtocolEvents), func(i int) []any {
+		"protocol", "contract_id", "action", "user_addr", "asset", "amount0", "amount1", "data", "verified"}, len(b.ProtocolEvents), func(i int) []any {
 		e := b.ProtocolEvents[i]
 		return []any{int64(e.Ledger), int32(e.TxIndex), int32(e.OpIndex), int32(e.Index), e.TxHash, e.ClosedAt, e.Protocol,
-			e.ContractID, sanitize(e.Action), null(e.User), null(e.Asset), num(e.Amount0), num(e.Amount1), jsonb(e.Data)}
+			e.ContractID, sanitize(e.Action), null(e.User), null(e.Asset), num(e.Amount0), num(e.Amount1), jsonb(e.Data), e.Verified}
 	}); err != nil {
 		return total, err
 	}
@@ -264,6 +360,12 @@ func writeBatch(ctx context.Context, tx pgx.Tx, b *processor.Batch) (int, error)
 			WHERE offers.last_modified <= EXCLUDED.last_modified`,
 			o.ID, o.Seller, o.Selling, o.Buying, o.Amount, o.PriceN, o.PriceD, pr, o.Passive, int64(o.LastModified))
 	}
+	for _, c := range b.Codes {
+		pb.Queue(`INSERT INTO contract_code (contract_id, executable, wasm_hash, ledger, checked_at) VALUES ($1,$2,$3,$4,now())
+			ON CONFLICT (contract_id) DO UPDATE SET executable=EXCLUDED.executable, wasm_hash=EXCLUDED.wasm_hash,
+			ledger=EXCLUDED.ledger, checked_at=now() WHERE contract_code.ledger <= EXCLUDED.ledger`,
+			c.ContractID, c.Executable, null(c.WasmHash), int64(c.Ledger))
+	}
 	for _, c := range Candles(b.Trades) {
 		pb.Queue(`INSERT INTO candles_1m (base, counter, bucket, open, high, low, close, base_volume, counter_volume, trades)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (base, counter, bucket) DO UPDATE SET
@@ -276,7 +378,7 @@ func writeBatch(ctx context.Context, tx pgx.Tx, b *processor.Batch) (int, error)
 		res := tx.SendBatch(ctx, pb)
 		for i := 0; i < pb.Len(); i++ {
 			if _, err := res.Exec(); err != nil {
-				res.Close()
+				_ = res.Close()
 				return total, fmt.Errorf("state upsert: %w", err)
 			}
 		}
@@ -297,7 +399,8 @@ type Candle struct {
 	Trades                 int
 }
 
-// Candles aggregates trades (in execution order) into 1-minute candles.
+// Candles aggregates verified trades (in execution order) into 1-minute
+// candles. Unverified fills (unknown pool code) never move prices.
 func Candles(trades []processor.Trade) []Candle {
 	type key struct {
 		b, c string
@@ -306,6 +409,9 @@ func Candles(trades []processor.Trade) []Candle {
 	idx := map[key]int{}
 	var out []Candle
 	for _, t := range trades {
+		if !t.Verified {
+			continue
+		}
 		tk, ok := processor.TickOf(t)
 		if !ok || tk.Price <= 0 {
 			continue

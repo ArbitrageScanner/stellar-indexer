@@ -2,6 +2,7 @@ package processor
 
 import (
 	"encoding/hex"
+	"errors"
 	"io"
 
 	"github.com/stellar/go-stellar-sdk/ingest"
@@ -16,10 +17,10 @@ func (c *ledgerCtx) state(lcm xdr.LedgerCloseMeta) error {
 		return err
 	}
 	reader := ingest.NewCompactingChangeReader(lr, ingest.ChangeCompactorConfig{SuppressRemoveAfterRestoreChange: true})
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	for {
 		ch, err := reader.Read()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
@@ -36,6 +37,15 @@ func (c *ledgerCtx) state(lcm xdr.LedgerCloseMeta) error {
 		lm := uint32(entry.LastModifiedLedgerSeq)
 		if deleted {
 			lm = c.seq
+		}
+		if ch.Type == xdr.LedgerEntryTypeContractData {
+			if code, ok := contractCode(entry, deleted, c.seq); ok {
+				c.b.Codes = append(c.b.Codes, code)
+			}
+			continue
+		}
+		if !c.p.opts.State {
+			continue
 		}
 		switch ch.Type {
 		case xdr.LedgerEntryTypeAccount:
@@ -86,4 +96,27 @@ func (c *ledgerCtx) state(lcm xdr.LedgerCloseMeta) error {
 			})
 		}
 	}
+}
+
+// contractCode extracts the executable from a contract instance entry.
+func contractCode(e *xdr.LedgerEntry, deleted bool, seq uint32) (ContractCode, bool) {
+	cd, ok := e.Data.GetContractData()
+	if !ok || cd.Key.Type != xdr.ScValTypeScvLedgerKeyContractInstance || cd.Contract.ContractId == nil {
+		return ContractCode{}, false
+	}
+	id := contractStrkey(*cd.Contract.ContractId)
+	if deleted {
+		return ContractCode{ContractID: id, Executable: "missing", Ledger: seq}, true
+	}
+	inst, ok := cd.Val.GetInstance()
+	if !ok {
+		return ContractCode{}, false
+	}
+	switch inst.Executable.Type {
+	case xdr.ContractExecutableTypeContractExecutableWasm:
+		return ContractCode{ContractID: id, Executable: "wasm", WasmHash: hex.EncodeToString(inst.Executable.WasmHash[:]), Ledger: seq}, true
+	case xdr.ContractExecutableTypeContractExecutableStellarAsset:
+		return ContractCode{ContractID: id, Executable: "stellar_asset", Ledger: seq}, true
+	}
+	return ContractCode{}, false
 }
