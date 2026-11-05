@@ -1,0 +1,59 @@
+# Testnet by default. For pubnet: STELLAR_NETWORK=pubnet docker compose up -d
+# (see README "Pubnet sizing" for retention settings).
+# Explorer UI: http://localhost:8080/ (redirects to /ui/); JSON API on the same port.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: indexer
+      POSTGRES_DB: indexer
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indexer"]
+      interval: 3s
+      retries: 20
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  indexer:
+    build: .
+    command: ["run"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://indexer:indexer@postgres:5432/indexer?sslmode=disable
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-}
+      START_LEDGER: ${START_LEDGER:--1000}
+      INDEX_FAILED_TXS: ${INDEX_FAILED_TXS:-true}
+      RETAIN_RAW_LEDGERS: ${RETAIN_RAW_LEDGERS:-0}
+      RETAIN_MARKET_LEDGERS: ${RETAIN_MARKET_LEDGERS:-0}
+      RETAIN_CANDLE_LEDGERS: ${RETAIN_CANDLE_LEDGERS:-0}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      UI_ENABLED: ${UI_ENABLED:-true}
+      LABELS_TOKEN: ${LABELS_TOKEN:-}
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
+  # Optional read-only API + UI replica (e.g. for a public dashboard):
+  #   docker compose --profile api up -d
+  api:
+    build: .
+    command: ["api"]
+    profiles: ["api"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://indexer:indexer@postgres:5432/indexer?sslmode=disable
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+    ports:
+      - "127.0.0.1:8081:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,8 @@
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!web/
+web/e2e/
+internal/**/testdata/

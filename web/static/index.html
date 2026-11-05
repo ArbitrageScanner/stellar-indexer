@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stellar Indexer Explorer</title>
+<meta name="description" content="Analytics explorer for the stellar-indexer: network, markets, accounts, Soroban protocols and contract events.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/app.css">
+<script>
+  // Apply the saved theme before first paint to avoid a flash.
+  try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
+</script>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="#/">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M7 19.5 25 11M7 15.5l18-8.5M7 23.5l18-8.5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <span><b>Stellar</b> Indexer</span>
+    </a>
+    <nav class="nav" id="nav">
+      <a href="#/" data-nav="overview"><i data-icon="pulse"></i>Overview</a>
+      <div class="nav-group">Explore</div>
+      <a href="#/ledgers" data-nav="ledgers"><i data-icon="layers"></i>Ledgers</a>
+      <a href="#/txs" data-nav="txs"><i data-icon="list"></i>Transactions</a>
+      <a href="#/ops" data-nav="ops"><i data-icon="cog"></i>Operations</a>
+      <a href="#/accounts" data-nav="accounts"><i data-icon="user"></i>Accounts</a>
+      <a href="#/transfers" data-nav="transfers"><i data-icon="arrows"></i>Transfers</a>
+      <div class="nav-group">Markets</div>
+      <a href="#/markets" data-nav="markets"><i data-icon="chart"></i>Markets</a>
+      <a href="#/trades" data-nav="trades"><i data-icon="swap"></i>Trades</a>
+      <a href="#/assets" data-nav="assets"><i data-icon="coin"></i>Assets</a>
+      <a href="#/pools" data-nav="pools"><i data-icon="drop"></i>Liquidity pools</a>
+      <div class="nav-group">Soroban</div>
+      <a href="#/protocols" data-nav="protocols"><i data-icon="grid"></i>Protocols</a>
+      <a href="#/contracts" data-nav="contracts"><i data-icon="code"></i>Contracts</a>
+      <a href="#/events" data-nav="events"><i data-icon="bolt"></i>Events</a>
+      <div class="nav-group">Insights</div>
+      <a href="#/leaders" data-nav="leaders"><i data-icon="trophy"></i>Leaderboards</a>
+      <a href="#/alerts" data-nav="alerts"><i data-icon="bell"></i>Notable events</a>
+      <a href="#/watchlist" data-nav="watchlist"><i data-icon="star"></i>Watchlist</a>
+      <a href="#/tags" data-nav="tags"><i data-icon="tag"></i>Tags</a>
+      <a href="#/compare" data-nav="compare"><i data-icon="swap"></i>Compare</a>
+      <div class="nav-group">Developers</div>
+      <a href="#/api" data-nav="api"><i data-icon="terminal"></i>API playground</a>
+    </nav>
+    <div class="sidebar-foot" id="sidebar-foot"></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+  <div class="main">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menu-btn" aria-label="Open navigation"><i data-icon="menu"></i></button>
+      <form class="search" id="search" role="search" autocomplete="off">
+        <i data-icon="search"></i>
+        <input id="search-input" type="search" placeholder="Search ledger, tx, account, contract, asset or #tag" aria-label="Search">
+        <kbd>/</kbd>
+        <div class="search-results" id="search-results" hidden></div>
+      </form>
+      <div class="topbar-right">
+        <a class="live" id="live" href="#/" title="Ingestion status"><span class="dot"></span><span class="live-text">connecting…</span></a>
+        <button class="icon-btn" id="theme-btn" aria-label="Toggle theme" title="Theme"><i data-icon="sun"></i></button>
+        <button class="icon-btn" id="settings-btn" aria-label="Settings" title="API endpoint"><i data-icon="sliders"></i></button>
+      </div>
+    </header>
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+</div>
+<dialog id="settings" class="dialog">
+  <form method="dialog">
+    <h3>API endpoint</h3>
+    <p class="muted">Leave empty to use the server that serves this page. Any stellar-indexer API works (CORS is enabled).</p>
+    <input id="api-base" type="url" placeholder="http://localhost:8080">
+    <h3>Labels token</h3>
+    <p class="muted">Only needed when the server sets LABELS_TOKEN. Sent as a Bearer token when you add or remove tags; stored in this browser.</p>
+    <input id="labels-token" type="password" autocomplete="off" placeholder="optional">
+    <div class="dialog-actions">
+      <button value="reset" class="btn ghost">Reset</button>
+      <button value="save" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
