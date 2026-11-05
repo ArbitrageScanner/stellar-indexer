@@ -16,32 +16,53 @@ What it indexes:
 | Soroban | `contract_events` | all non-token contract events, with topics and data decoded to JSON |
 | Protocols | `protocol_events` | decoded **Soroswap**, **Aquarius**, **Blend**, CLMM pools, generic AMMs |
 
+## Architecture
+
+```
+RPC ─▶ fetcher ─▶ Redpanda/Kafka topic (raw LedgerCloseMeta, 1 partition) ─▶ writer ─▶ Postgres ◀─ api replicas (+ UI)
+```
+
+- **fetcher** (`indexer fetch`): stateless. Streams ledgers from RPC onto the topic and resumes after the newest ledger already on the topic (or the DB cursor).
+- **writer** (`indexer write`): decodes, verifies protocol contracts, and commits each batch together with the cursor in one Postgres transaction. Kafka offsets are committed only afterwards, and ledgers at or below the cursor are skipped, so delivery is effectively exactly-once.
+- **api** (`indexer api`): read side, JSON + explorer UI. Scales horizontally.
+- **direct mode** (`indexer run`): the same pipeline in one process without a queue, for small setups.
+
+Design decisions, failure behaviour and package layout are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The API design (layers, middleware, security) is in [docs/API.md](docs/API.md), and its contract in [`internal/api/openapi.yaml`](internal/api/openapi.yaml) (served at `/openapi.yaml`).
+
+Indexing starts at the current ledger (`START_LEDGER=latest`). History is deliberately out of scope; restarts of any component resume where they stopped.
+
 ## Quick start
 
 ```bash
-cp .env.example .env              # optional
-docker compose up -d --build      # Postgres + indexer + API on 127.0.0.1:8080 (testnet)
-curl localhost:8080/status
-open http://localhost:8080/        # browsers are redirected to the explorer at /ui/
+cp .env.example .env                 # optional
+docker compose up -d --build --wait  # postgres, redpanda, fetcher, writer, api (testnet)
+curl localhost:8080/status           # cursor, component heartbeats, gaps
+curl localhost:8080/ready            # 200 when the index is fresh
+open http://localhost:8080/          # explorer UI
 ```
 
-Without Docker (Go ≥ 1.25):
+Single process without a queue: `docker compose --profile direct up -d --build postgres indexer`.
+
+Without Docker (Go 1.27):
 
 ```bash
-export DATABASE_URL=postgres://indexer:indexer@localhost:5432/indexer?sslmode=disable
-go build -o bin/indexer ./cmd/indexer
-STELLAR_NETWORK=testnet START_LEDGER=-500 ./bin/indexer run
+make build
+export DATABASE_URL=postgres://indexer:indexer@localhost:5432/indexer?sslmode=disable STELLAR_NETWORK=testnet
+./bin/indexer run                                         # direct mode
+KAFKA_BROKERS=localhost:19092 ./bin/indexer fetch &       # queue mode
+KAFKA_BROKERS=localhost:19092 ./bin/indexer write &
+./bin/indexer api
 ```
-
-Commands:
 
 | Command | Purpose |
 |---|---|
-| `indexer run` | ingest and serve the API (default) |
-| `indexer ingest` | ingest only |
-| `indexer api` | serve the API only (any number of replicas) |
-| `indexer migrate` | apply the schema |
-| `indexer inspect [seq]` | decode one ledger from RPC and print a summary, without touching the DB |
+| `indexer fetch` | RPC → Kafka topic |
+| `indexer write` | Kafka topic → decode → verify → Postgres (+ retention). Extra writers in the group are hot standbys |
+| `indexer api` | HTTP API, `/metrics`, `/ready`, explorer UI; any number of replicas |
+| `indexer run` | Direct pipeline + API in one process (no queue) |
+| `indexer migrate` | Apply database migrations and exit |
+| `indexer inspect [seq]` | Decode one ledger from RPC and print a summary (no DB) |
+| `indexer contract-code C…` | Show contract executables and which protocol allowlists they match |
 
 ## Explorer UI
 
@@ -84,13 +105,23 @@ node web/e2e/smoke.mjs http://localhost:8080
 - **Automatic tags.** Thresholds are in `internal/api/insights.go` and listed on the Tags page: whale ≥ 1M XLM, large holder ≥ 100K XLM, arbitrage bot ≥ 3 round trips in 7 days, market maker = two-sided offers or ≥ 100 offer updates in 24h, high-frequency ≥ 500 txs or ≥ 1000 fills in 24h, new account < 7 days (creation ledger = starting sequence number >> 32), dormant = no activity for 7 days.
 - **User labels** live in the `labels` table. Writes are open by default, which suits a local tool. Set `LABELS_TOKEN` to require `Authorization: Bearer <token>`; the UI asks for it under settings (⚙). Tags match `[a-z0-9][a-z0-9_.-]{0,31}`; notes are limited to 280 characters.
 
-## How ingestion works
+## Ingestion and reliability
 
-- **Source.** `ingest/ledgerbackend.RPCLedgerBackend` fetches `getLedgers` in batches (`RPC_BUFFER`). When it reaches the tip it blocks and polls until the next ledger closes, so a backfill turns into a live tail automatically.
-- **Exactly-once.** Each commit holds a group of ledgers (`COMMIT_EVERY` while backfilling; every ledger once live) and the cursor update, in a single Postgres transaction. A ledger already in `ledgers` is skipped, so re-running over an indexed range never double-counts candle volume.
-- **Resume.** On start, the indexer resumes from `cursors.ledger + 1`. If there is no cursor (or `FORCE_START=true`), it uses `START_LEDGER`: `latest`, `oldest`, `-N`, or an absolute sequence. A start older than the RPC retention window is rejected with an explicit error.
-- **Errors.** RPC and DB errors retry with linear backoff (`RETRY_BACKOFF`, `MAX_RETRIES`; 0 means retry forever) and resume from the last committed ledger.
-- **Retention.** An optional pruner (`RETAIN_*_LEDGERS`) deletes old raw rows in chunks, while keeping trades and candles longer.
+- **Source.** `RPCLedgerBackend` fetches `getLedgers` in batches (`RPC_BUFFER`) and long-polls at the tip.
+- **Queue contract.** One record per ledger: key = 8-byte sequence, value = `LedgerCloseMeta` XDR (zstd), headers `schema=lcm-xdr-v1`, `network=<passphrase hash>`, `closed_at`. The producer is idempotent with `acks=all`, and the fetcher advances only after each acknowledgement. The writer rejects records from another network or schema.
+- **Exactly-once effect.** Data, cursor, gap records and the writer heartbeat are committed in one Postgres transaction. The writer commits Kafka offsets after that transaction; anything at or below the cursor is a no-op on redelivery.
+- **Restarts.** The fetcher resumes at `max(topic end, DB cursor) + 1`, the writer at its committed offset, and `run` at the DB cursor. If a component is down longer than the RPC retention window, the missing range goes to `ledger_gaps` (visible in `/status` and `indexer_ledger_gaps_total`) and ingestion continues.
+- **Integrity.** Each ledger's `prev_hash` must match the stored predecessor; otherwise the writer stops (`ErrChainMismatch`). Undecodable ledgers also stop it rather than being skipped. DB and RPC errors retry the same batch with backoff.
+- **Partitions and retention.** Fact tables are partitioned by ledger range (`PARTITION_LEDGERS`). Retention (`RETAIN_*_LEDGERS`) detaches and drops whole partitions concurrently, so there are no row deletes.
+- **Verified test:** `internal/ingest/pipeline_test.go` covers fetcher restart without duplicates, redelivery without double-counted candles, foreign-record rejection, gap recording, chain-mismatch stops and partition retention. A chaos run against real Redpanda and Postgres (`kill -9` of the fetcher and writer, Redpanda and Postgres stopped mid-stream) ended with every check in [`scripts/check-invariants.sql`](scripts/check-invariants.sql) passing (see below).
+
+### Protocol verification
+
+Protocol events are recognised by their shape, which any contract can imitate. Each pool contract's executable is therefore resolved: from contract-instance changes in ingested ledgers, otherwise once via RPC `getLedgerEntries`, cached in `contract_code`. Fills and events are `verified` only when the wasm hash is allowlisted for the protocol. Unverified data is stored and marked in the API/UI, but never reaches candles, prices, PnL, leaderboards or alerts.
+
+- Default allowlists (pubnet and testnet) cover code shared by many factory-deployed pools of Aquarius, Soroswap, Blend and CLMM, plus the Aquarius and Soroswap routers ([internal/verify/allowlist.go](internal/verify/allowlist.go)). One-off "generic AMM" contracts are not allowlisted.
+- Extend or replace them with `PROTOCOL_ALLOWLIST_FILE`; review candidates with `indexer contract-code C…`. `PROTOCOL_VERIFY=off` disables the check.
+- A failed lookup retries the batch, so a transient RPC error never marks genuine data unverified.
 
 ### Prices
 
@@ -123,11 +154,14 @@ Once a contract is attributed to a protocol, its other events are labelled with 
 
 ## HTTP API
 
-All endpoints are `GET` and return JSON. Asset parameters accept `native`/`XLM`, `CODE:ISSUER`, or a contract id.
+The contract is [`internal/api/openapi.yaml`](internal/api/openapi.yaml) (served at `/openapi.yaml`; a test keeps it in sync with the routes). Middleware, security and probes are described in [docs/API.md](docs/API.md). The read API is public by default; set `API_KEYS` to require a key. Label writes are closed unless `LABELS_TOKEN` or `LABELS_OPEN` is set. Requests are rate-limited per client IP, and heavy analytics responses are cached for `CACHE_TTL`. Analytics windows end at the newest indexed ledger (`index_now()`). Prices, candles, PnL, leaderboards and alerts use verified fills only.
+
+Asset parameters accept `native`/`XLM`, `CODE:ISSUER`, or a contract id.
 
 | Endpoint | Description |
 |---|---|
-| `/status` | cursor, lag (ledgers and seconds), RPC tip |
+| `/health`, `/ready`, `/metrics`, `/openapi.yaml` | liveness, readiness (DB + freshness ≤ `READY_MAX_LAG`), Prometheus metrics, API contract |
+| `/status` | cursor, lag, pipeline component heartbeats, ledger gaps |
 | `/search?q` | classify a ledger number, tx hash, G…/C… address or asset code into entities in the index |
 | `/ledgers?limit&before`, `/ledgers/{seq}` | ledgers with tx list |
 | `/transactions?successful&soroban&source&contract&function&ledger&before` | filtered tx feed (page with `before=<id>`) |
@@ -162,19 +196,22 @@ Feeds use keyset pagination: pass the last row's position as `before`. That is t
 
 ## Configuration
 
-See [.env.example](.env.example) for every variable. The main ones:
+All settings are environment variables, validated at startup (an invalid combination exits with code 2). [.env.example](.env.example) documents every variable. The main ones:
 
 | Var | Default | |
 |---|---|---|
-| `STELLAR_NETWORK` | `testnet` | `testnet`, `pubnet` or custom (set `NETWORK_PASSPHRASE` + `STELLAR_RPC_URL`) |
-| `STELLAR_RPC_URL` | SDF testnet / `mainnet.sorobanrpc.com` | any Stellar RPC with `getLedgers` |
-| `DATABASE_URL` | local Postgres | |
-| `START_LEDGER` | `-100` | used only when no cursor exists |
+| `STELLAR_NETWORK` | `testnet` | `testnet`, `pubnet`, or custom (set `NETWORK_PASSPHRASE` + `STELLAR_RPC_URL`) |
+| `START_LEDGER` | `latest` | used only when there is nothing to resume from |
+| `KAFKA_BROKERS` | — | required by `fetch`/`write`; topic `stellar.<network>.ledgers` (`KAFKA_TOPIC`) |
+| `KAFKA_RETENTION` / `KAFKA_RETENTION_BYTES` | `24h` / unlimited (compose: 2 GiB) | outage buffer and replay window |
+| `PARTITION_LEDGERS` | `20000` | ledger range per partition, fixed at first start |
+| `RETAIN_RAW_LEDGERS` / `RETAIN_MARKET_LEDGERS` / `RETAIN_CANDLE_LEDGERS` | `0` (keep) | retention windows in ledgers (~5.5 s each); raw and market windows drop whole partitions |
 | `INDEX_FAILED_TXS` | `true` | set `false` on pubnet to save space |
-| `RETAIN_RAW_LEDGERS` / `RETAIN_MARKET_LEDGERS` / `RETAIN_CANDLE_LEDGERS` | `0` (keep) | pruning windows, in ledgers (~5.5 s each) |
-| `UI_ENABLED` / `UI_DIR` | `true` / empty | serve the embedded explorer at `/ui/`; `UI_DIR` serves it from disk instead (development) |
-| `USD_ASSET` | Circle USDC of the network | asset whose XLM market prices XLM in USD |
-| `LABELS_TOKEN` | empty (open) | Bearer token required for label writes |
+| `PROTOCOL_VERIFY` / `PROTOCOL_ALLOWLIST_FILE` | `enforce` / — | protocol contract verification |
+| `API_KEYS`, `RATE_LIMIT_RPS`, `CORS_ORIGINS`, `CACHE_TTL`, `READY_MAX_LAG` | —, `20`, `*`, `10s`, `2m` | API hardening (docs/API.md) |
+| `LABELS_TOKEN` / `LABELS_OPEN` | — / `false` | label write policy |
+| `METRICS_ADDR` | `:9100` | `/metrics` and `/health` of `fetch` and `write` |
+| `LOG_FORMAT` | `text` | `json` for log shipping (compose default) |
 
 ### Pubnet sizing (measured)
 
@@ -188,7 +225,7 @@ On pubnet, roughly 80% of transactions are failed arbitrage attempts. For a lean
 
 ```
 INDEX_FAILED_TXS=false
-RETAIN_RAW_LEDGERS=17280       # ~1 day of txs/ops/transfers/events
+RETAIN_RAW_LEDGERS=20000       # ~1 day of txs/ops/transfers/events (one partition)
 RETAIN_MARKET_LEDGERS=518400   # ~30 days of trades/protocol events
 # candles and ledgers kept forever
 ```
@@ -196,20 +233,28 @@ RETAIN_MARKET_LEDGERS=518400   # ~30 days of trades/protocol events
 ## Tests
 
 ```bash
-go test ./...                                     # unit tests + fixture tests on real pubnet ledgers
-TEST_DATABASE_URL=postgres://... go test ./...    # + Postgres write/idempotency/prune/API integration test
-node web/e2e/smoke.mjs http://localhost:8080      # browser smoke test of every UI page (needs playwright)
+make test                     # unit + fixture tests on recorded pubnet ledgers
+make itest                    # + Postgres integration and the queue pipeline (in-memory Kafka); DB=postgres://...
+make race                     # the same with the race detector
+make lint                     # golangci-lint (.golangci.yml)
+make invariants               # data-integrity checks against a running index
+make e2e URL=http://localhost:8080   # browser smoke test of every explorer page (needs playwright)
 ```
 
-The fixtures in `internal/processor/testdata` are two recorded pubnet ledgers:
-- **65311337**: a Blend flash-loan arbitrage XLM→AQUA→VELO→SHX→XLM through four Aquarius pools, plus SDEX and AMM fills
-- **65312802**: Soroswap pair swaps
+CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs lint, `go test -race` with Postgres, a Docker build, and, on main, the full compose stack against testnet followed by the browser smoke test.
 
-The tests check decoded amounts, SAC→classic asset resolution, price ticks, the Blend actions, average-cost PnL and round-trip detection (unit tests), portfolio/stats/tags/leaderboards/alerts responses, label CRUD with validation, the bearer token and the CORS preflight. They also check that every API endpoint responds, that pagination never repeats a row, that search classifies entities, and that the embedded UI is served.
+- **Fixtures.** `internal/processor/testdata` holds two recorded pubnet ledgers:
+  - 65311337: a Blend flash-loan arbitrage through four Aquarius pools, plus SDEX and AMM fills.
+  - 65312802: Soroswap pair swaps.
+- **Pipeline tests** (`internal/ingest`): queue round trip, fetcher resume without duplicates, idempotent redelivery (no double-counted candles), foreign-record rejection, gap recording, chain-mismatch stop, and partition retention that never resurrects pruned partitions.
+- **Verification tests** (`internal/verify`): an allowlisted pool versus a contract with the same event shape but foreign code; an in-ledger upgrade; resolver failure aborts instead of marking data unverified.
+- **API tests** (`internal/api`, `internal/analytics`): every endpoint against fixtures, middleware (rate limit, API keys, CORS, request IDs, cache, label write policy), OpenAPI coverage of all routes, and pure domain logic (PnL, round trips, valuation, tags).
 
 ## Limitations
 
-- **History depth.** History is limited to what the RPC retains (about 7 days on public RPCs). Deeper backfill would need a Galexie datastore (`BufferedStorageBackend`) or captive core. The `source.Source` interface is the plug-in point; neither is wired in, to keep dependencies small.
+- **No history (by design).** Indexing starts at launch. A Galexie datastore (`BufferedStorageBackend`) behind `source.Source` would be the plug-in point for backfill.
+- **Query-time analytics.** Leaderboards, alerts and protocol summaries are computed from the fact tables (verified rows) behind a short cache. For long pubnet retention, pre-aggregated rollups or a ClickHouse consumer on the topic are the next step (docs/ARCHITECTURE.md).
+- **Allowlist maintenance.** When a protocol upgrades its contracts, new code hashes must be allowlisted. Until then their events are stored as unverified and counted in `indexer_unverified_protocol_events_total`.
 - **Account state.** Account, trustline and offer tables hold every entry touched since indexing began, not a full ledger snapshot. A full snapshot would mean bootstrapping from a history-archive checkpoint (`ingest.CheckpointChangeReader`), which runs to tens of GB on pubnet.
 - **Contract balances.** Soroban contract-data balances (SEP-41 balances held by contracts) are not materialised. Token flows are in `transfers`.
 - **Token decimals.** Soroban tokens with decimals other than 7 get correct raw amounts in `trades`, but wrong `price`/`*_volume` values.
