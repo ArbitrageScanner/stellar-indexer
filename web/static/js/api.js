@@ -16,6 +16,13 @@ export function apiURL(path) {
   return (b || location.origin) + path;
 }
 
+// headers adds the optional API key (settings dialog) to a request.
+export function headers(extra = {}) {
+  const h = { Accept: 'application/json', ...extra };
+  try { const k = localStorage.getItem('apiKey'); if (k) h['X-API-Key'] = k; } catch {}
+  return h;
+}
+
 export class ApiError extends Error {
   constructor(message, { status = 0, url = '', body = null } = {}) {
     super(message);
@@ -28,7 +35,7 @@ export async function get(path, { signal } = {}) {
   const url = apiURL(path);
   let res;
   try {
-    res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    res = await fetch(url, { signal, headers: headers() });
   } catch (e) {
     if (e.name === 'AbortError') throw e;
     throw new ApiError(`Network error: cannot reach ${apiBase() || location.origin} (${e.message})`, { url });
@@ -48,7 +55,7 @@ export async function get(path, { signal } = {}) {
 export async function raw(path, { signal } = {}) {
   const url = apiURL(path);
   const t0 = performance.now();
-  const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+  const res = await fetch(url, { signal, headers: headers() });
   const text = await res.text();
   const ms = performance.now() - t0;
   let body = null;
@@ -71,13 +78,12 @@ export function qs(params) {
 export async function send(method, path, body) {
   let token = '';
   try { token = localStorage.getItem('labelsToken') || ''; } catch {}
-  const headers = { Accept: 'application/json' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
+  const h = headers(body !== undefined ? { 'Content-Type': 'application/json' } : {});
+  if (token) h.Authorization = `Bearer ${token}`;
   const url = apiURL(path);
   let res;
   try {
-    res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    res = await fetch(url, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch (e) {
     throw new ApiError(`Network error: ${e.message}`, { url });
   }

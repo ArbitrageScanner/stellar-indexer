@@ -1,5 +1,5 @@
 import { get, qs } from '../api.js';
-import { html, setHTML, load, card, pageHead, seg, bindSeg, table, num, compact, price, amount, stroops, pct, ago, when, asset,
+import { html, setHTML, load, card, pageHead, seg, bindSeg, table, num, compact, price, amount, stroops, pct, ago, when, asset, unverified,
   venue, addr, txLink, raw, parseAsset, expert, stackbar, VENUE_LABEL, venueColor, icon, empty } from '../ui.js';
 import { candles } from '../charts.js';
 
@@ -80,7 +80,7 @@ export default async function pair(view, [base, counter], query, ctx) {
     drawSide();
     return table([
       { h: 'Time', v: (t) => when(t.closed_at) },
-      { h: 'Venue', v: (t) => venue(t.venue) },
+      { h: 'Venue', v: (t) => html`${venue(t.venue)}${unverified(t)}` },
       { h: 'Side', v: (t) => html`<span class="${t.sell ? 'down' : 'up'}">${t.sell ? 'Sell' : 'Buy'}</span>` },
       { h: `Price (${C.code})`, cls: 'num', v: (t) => price(t.p) },
       { h: `Amount (${B.code})`, cls: 'num', v: (t) => amount(t.baseAmt) },

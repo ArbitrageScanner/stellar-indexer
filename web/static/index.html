@@ -7,10 +7,7 @@
 <meta name="description" content="Analytics explorer for the stellar-indexer: network, markets, accounts, Soroban protocols and contract events.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/app.css">
-<script>
-  // Apply the saved theme before first paint to avoid a flash.
-  try { const t = localStorage.getItem('theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch {}
-</script>
+<script src="js/theme-init.js"></script>
 </head>
 <body>
 <div class="app">
@@ -74,6 +71,9 @@
     <h3>Labels token</h3>
     <p class="muted">Only needed when the server sets LABELS_TOKEN. Sent as a Bearer token when you add or remove tags; stored in this browser.</p>
     <input id="labels-token" type="password" autocomplete="off" placeholder="optional">
+    <h3>API key</h3>
+    <p class="muted">Only needed when the server sets API_KEYS. Sent as X-API-Key on every request; stored in this browser.</p>
+    <input id="api-key" type="password" autocomplete="off" placeholder="optional">
     <div class="dialog-actions">
       <button value="reset" class="btn ghost">Reset</button>
       <button value="save" class="btn primary">Save</button>

@@ -1,5 +1,5 @@
 import { get, qs } from '../api.js';
-import { html, setHTML, feed, pageHead, seg, bindSeg, when, addr, txLink, tag, json } from '../ui.js';
+import { html, setHTML, feed, pageHead, seg, bindSeg, when, addr, txLink, tag, json, unverified } from '../ui.js';
 import { PROTOCOLS } from '../protocols-meta.js';
 
 export default async function events(view, _p, query, ctx) {
@@ -21,7 +21,7 @@ export default async function events(view, _p, query, ctx) {
       pageSize: 30,
       cols: [
         { h: 'Time', v: (e) => when(e.closed_at) },
-        { h: 'Contract', v: (e) => html`${addr(e.contract_id)}${e.protocol ? html`<div style="margin-top:2px">${tag(e.protocol)}</div>` : ''}` },
+        { h: 'Contract', v: (e) => html`${addr(e.contract_id)}${e.protocol ? html`<div style="margin-top:2px">${tag(e.protocol)}${unverified(e)}</div>` : ''}` },
         { h: 'Topic', v: (e) => html`<a href="#/events?topic=${encodeURIComponent(e.topic0)}">${tag(e.topic0)}</a>` },
         { h: 'Topics', v: (e) => json(e.topics.slice(1), 'inline') },
         { h: 'Data', v: (e) => json(e.data, 'inline') },

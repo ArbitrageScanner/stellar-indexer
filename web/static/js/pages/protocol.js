@@ -1,6 +1,6 @@
 import { get, qs } from '../api.js';
 import { html, setHTML, load, feed, pageHead, seg, bindSeg, card, tile, table, num, compact, amount, amt7, price, when, addr, txLink,
-  asset, tag, hbars, pairLink, raw, venueColor, empty } from '../ui.js';
+  asset, tag, hbars, pairLink, raw, venueColor, empty, unverified } from '../ui.js';
 import { columns } from '../charts.js';
 import { PROTOCOLS, protoName } from '../protocols-meta.js';
 
@@ -9,24 +9,26 @@ const LENDING = ['supply', 'supply_collateral', 'withdraw', 'withdraw_collateral
 export default async function protocol(view, [name], query, ctx) {
   let hours = query.hours || '24';
   let action = query.action || '';
+  let scope = query.verified === 'all' ? 'all' : '';
   const m = PROTOCOLS[name];
   setHTML(view, html`
     ${pageHead(html`<span style="display:inline-flex;align-items:center;gap:10px"><span class="proto-card" style="padding:0"><span class="logo" style="width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:13px;background:${raw(venueColor(name))}">${protoName(name)[0]}</span></span>${protoName(name)}</span>`, {
       crumbs: html`<a href="#/protocols">Protocols</a> / ${protoName(name)}`,
       sub: m?.about || 'Decoded protocol events.',
-      actions: seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours),
+      actions: html`${seg('scope', [['', 'Verified'], ['all', 'Include unverified']], scope)}${seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours)}`,
     })}
     <div id="summary"></div>
     <div class="card" style="margin-top:16px"><div class="card-head"><h2>Events</h2><span id="aseg"></span></div><div class="card-body flush" id="events"></div></div>`);
 
-  const run = () => load(view.querySelector('#summary'), () => get(`/protocols/${name}/summary` + qs({ hours })), (s) => {
+  const run = () => load(view.querySelector('#summary'), () => get(`/protocols/${name}/summary` + qs({ hours, verified: scope })), (s) => {
     const ev = s.actions.reduce((a, r) => a + r.events, 0);
     const lending = s.by_asset.filter((r) => LENDING.includes(r.action));
     const assets = [...new Set(lending.map((r) => r.asset))];
     const cell = (a, act) => lending.find((r) => r.asset === a && r.action === act);
     setHTML(view.querySelector('#aseg'), seg('action', [['', 'All'], ...s.actions.slice(0, 9).map((a) => [a.action, a.action])], action));
-    bindSeg(view.querySelector('#aseg'), 'action', (a) => { action = a; ctx.setQuery({ hours, action }); events(); });
+    bindSeg(view.querySelector('#aseg'), 'action', (a) => { action = a; ctx.setQuery({ hours, action, verified: scope }); events(); });
     return html`
+      ${s.unverified_events && !scope ? html`<div class="notice">${raw('<i data-icon="alert"></i>')}<div><b>${num(s.unverified_events)}</b> events in this window come from contracts whose code is not allowlisted for ${protoName(name)} (possible spoofs or unknown versions). They are excluded from these figures, prices and analytics; switch to “Include unverified” to inspect them.</div></div>` : ''}
       <div class="tiles">
         ${tile('Events', compact(ev), { title: num(ev) })}
         ${tile('Transactions', compact(Math.max(0, ...s.actions.map((a) => a.txs))), { foot: 'max over actions' })}
@@ -73,12 +75,12 @@ export default async function protocol(view, [name], query, ctx) {
   });
 
   const events = () => feed(view.querySelector('#events'), {
-    fetchPage: (before) => get(`/protocols/${name}/events` + qs({ action, before, limit: 50 })),
+    fetchPage: (before) => get(`/protocols/${name}/events` + qs({ action, before, limit: 50, verified: scope })),
     cursor: (e) => `${e.ledger}.${e.tx_index}.${e.op_index}.${e.event_index}`,
     rowHref: (e) => `#/tx/${e.tx_hash}`,
     cols: [
       { h: 'Time', v: (e) => when(e.closed_at) },
-      { h: 'Action', v: (e) => tag(e.action) },
+      { h: 'Action', v: (e) => html`${tag(e.action)}${unverified(e)}` },
       { h: 'User', v: (e) => addr(e.user_addr) },
       { h: 'Asset', v: (e) => e.asset ? asset(e.asset) : '—' },
       { h: 'Amount 0', cls: 'num', v: (e) => e.amount0 ? amt7(e.amount0) : '—' },
@@ -89,5 +91,6 @@ export default async function protocol(view, [name], query, ctx) {
     emptyTitle: 'No events',
   });
   run(); events();
-  bindSeg(view, 'hours', (h) => { hours = h; ctx.setQuery({ hours, action }); run(); });
+  bindSeg(view, 'hours', (h) => { hours = h; ctx.setQuery({ hours, action, verified: scope }); run(); });
+  bindSeg(view, 'scope', (v) => { scope = v; ctx.setQuery({ hours, action, verified: scope }); run(); events(); });
 }

@@ -1,0 +1,1703 @@
+openapi: 3.1.0
+info:
+  title: stellar-indexer API
+  version: 1.0.0
+  description: >-
+    Read API over a Stellar analytics index (ledgers, transactions, operations, token flows, trades and
+    candles, Soroban protocol events, portfolios, tags) plus user labels. Analytics windows end at the
+    newest indexed ledger, not the wall clock. Only verified fills (classic venues and Soroban pools whose
+    code is allowlisted) feed prices, candles and analytics. Amount strings are integers in 7-decimal base
+    units; *_xlm and *_volume fields are whole units. When API keys are configured, send X-API-Key.
+servers:
+  - url: /
+security:
+  - {}
+  - apiKey: []
+tags:
+  - name: status
+  - name: explorer
+  - name: accounts
+  - name: markets
+  - name: protocols
+  - name: stats
+  - name: labels
+  - name: insights
+paths:
+  /:
+    get:
+      tags: [status]
+      summary: Service index
+      operationId: get_
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"type":"object","description":"Service name, network, feature flags and the endpoint list."}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /health:
+    get:
+      tags: [status]
+      summary: Liveness probe
+      operationId: get_health
+      description: "200 when the process serves and Postgres answers; 503 otherwise. Exempt from API keys and rate limits."
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Health"}}}
+        '503':
+          description: Unavailable
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /ready:
+    get:
+      tags: [status]
+      summary: Readiness probe
+      operationId: get_ready
+      description: "503 when Postgres is down or, with READY_MAX_LAG set, the newest indexed ledger is older than the limit."
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Ready"}}}
+        '503':
+          description: Unavailable
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /metrics:
+    get:
+      tags: [status]
+      summary: Prometheus metrics
+      operationId: get_metrics
+      description: "Prometheus text exposition (indexer_*, http_*, go_*, process_*). Exempt from API keys."
+      responses:
+        '200':
+          description: OK
+          content: {text/plain: {schema: {type: string}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /openapi.yaml:
+    get:
+      tags: [status]
+      summary: This specification
+      operationId: get_openapi_yaml
+      responses:
+        '200':
+          description: OK
+          content: {application/yaml: {schema: {type: string}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /status:
+    get:
+      tags: [status]
+      summary: Index position and pipeline health
+      operationId: get_status
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Status"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /search:
+    get:
+      tags: [status]
+      summary: Classify a search term
+      operationId: get_search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: "Ledger number, 64-hex tx hash, G…/C… address, asset code or #tag."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"type":"array","items":{"$ref":"#/components/schemas/SearchHit"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /ledgers:
+    get:
+      tags: [explorer]
+      summary: Ledgers, newest first
+      operationId: get_ledgers
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor: the last row's id (TOID; ledgers: sequence)."
+          schema: {"type":"string","pattern":"^[0-9]+$"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 200, default: 20}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Ledger"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /ledgers/{seq}:
+    get:
+      tags: [explorer]
+      summary: One ledger with its transactions
+      operationId: get_ledgers_by_seq
+      parameters:
+        - name: seq
+          in: path
+          required: true
+          description: "Ledger sequence."
+          schema: {"type":"integer","format":"int64"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Ledger"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '404':
+          description: Not found
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /transactions:
+    get:
+      tags: [explorer]
+      summary: Filtered transaction feed
+      operationId: get_transactions
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor: the last row's id (TOID; ledgers: sequence)."
+          schema: {"type":"string","pattern":"^[0-9]+$"}
+        - name: source
+          in: query
+          required: false
+          description: "Source account."
+          schema: {"type":"string"}
+        - name: contract
+          in: query
+          required: false
+          description: "Contract id (C…)."
+          schema: {"type":"string"}
+        - name: function
+          in: query
+          required: false
+          description: "Invoked function."
+          schema: {"type":"string"}
+        - name: successful
+          in: query
+          required: false
+          description: "Filter by outcome."
+          schema: {"type":"boolean"}
+        - name: soroban
+          in: query
+          required: false
+          description: "Soroban (true) or classic (false)."
+          schema: {"type":"boolean"}
+        - name: ledger
+          in: query
+          required: false
+          description: "Exact ledger."
+          schema: {"type":"integer","format":"int64"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/TransactionSummary"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /transactions/{hash}:
+    get:
+      tags: [explorer]
+      summary: Transaction with operations, transfers, trades and events
+      operationId: get_transactions_by_hash
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: "Transaction hash."
+          schema: {"type":"string","pattern":"^[0-9a-fA-F]{64}$"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/TransactionDetail"}}}
+        '404':
+          description: Not found
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /operations:
+    get:
+      tags: [explorer]
+      summary: Typed operation feed
+      operationId: get_operations
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor: the last row's id (TOID; ledgers: sequence)."
+          schema: {"type":"string","pattern":"^[0-9]+$"}
+        - name: type
+          in: query
+          required: false
+          description: "Operation type, e.g. invoke_host_function."
+          schema: {"type":"string"}
+        - name: source
+          in: query
+          required: false
+          description: "Source account."
+          schema: {"type":"string"}
+        - name: successful
+          in: query
+          required: false
+          description: "Filter by outcome."
+          schema: {"type":"boolean"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Operation"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /transfers:
+    get:
+      tags: [explorer]
+      summary: Token-flow feed (CAP-67)
+      operationId: get_transfers
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor ledger.tx_index.transfer_index."
+          schema: {"type":"string","pattern":"^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+        - name: asset
+          in: query
+          required: false
+          description: "Asset key: native/XLM, CODE:ISSUER or C… contract."
+          schema: {"type":"string"}
+        - name: type
+          in: query
+          required: false
+          description: "Transfer type."
+          schema: {"type":"string","enum":["transfer","mint","burn","clawback","fee"]}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Transfer"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /events:
+    get:
+      tags: [explorer]
+      summary: Contract event feed
+      operationId: get_events
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor ledger.tx_index.op_index.event_index."
+          schema: {"type":"string","pattern":"^[0-9]+(\\.[0-9]+){3}$"}
+        - name: contract
+          in: query
+          required: false
+          description: "Contract id (C…)."
+          schema: {"type":"string"}
+        - name: topic
+          in: query
+          required: false
+          description: "First topic (topic0)."
+          schema: {"type":"string"}
+        - name: protocol
+          in: query
+          required: false
+          description: "Decoded protocol, or `none` for contracts without a decoder."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/ContractEvent"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /contracts:
+    get:
+      tags: [explorer]
+      summary: Most active contracts
+      operationId: get_contracts
+      description: "Cached (CACHE_TTL)."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/ContractActivity"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /contracts/{id}:
+    get:
+      tags: [explorer]
+      summary: Contract summary, executable and verification
+      operationId: get_contracts_by_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Contract id."
+          schema: {"type":"string","pattern":"^C[A-Z2-7]{55}$"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/ContractSummary"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /contracts/{id}/events:
+    get:
+      tags: [explorer]
+      summary: Events of one contract
+      operationId: get_contracts_by_id_events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Contract id."
+          schema: {"type":"string","pattern":"^C[A-Z2-7]{55}$"}
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor ledger.tx_index.op_index.event_index."
+          schema: {"type":"string","pattern":"^[0-9]+(\\.[0-9]+){3}$"}
+        - name: topic
+          in: query
+          required: false
+          description: "First topic (topic0)."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/ContractEvent"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/top:
+    get:
+      tags: [accounts]
+      summary: Largest indexed XLM balances
+      operationId: get_accounts_top
+      parameters:
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/AccountRank"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}:
+    get:
+      tags: [accounts]
+      summary: Account state, trustlines, offers and 24h activity
+      operationId: get_accounts_by_id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Account"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/operations:
+    get:
+      tags: [accounts]
+      summary: Operations sourced by the address
+      operationId: get_accounts_by_id_operations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor: the last row's id (TOID; ledgers: sequence)."
+          schema: {"type":"string","pattern":"^[0-9]+$"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Operation"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/transfers:
+    get:
+      tags: [accounts]
+      summary: Transfers in and out
+      operationId: get_accounts_by_id_transfers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Transfer"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/trades:
+    get:
+      tags: [accounts]
+      summary: Fills taken by the address
+      operationId: get_accounts_by_id_trades
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Trade"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/events:
+    get:
+      tags: [accounts]
+      summary: Protocol events where the address is the user
+      operationId: get_accounts_by_id_events
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/ProtocolEvent"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/portfolio:
+    get:
+      tags: [accounts]
+      summary: Valued holdings and hourly history
+      operationId: get_accounts_by_id_portfolio
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - name: history
+          in: query
+          required: false
+          description: "Include the hourly value history."
+          schema: {"type":"boolean","default":true}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Portfolio"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/stats:
+    get:
+      tags: [accounts]
+      summary: Trading and activity indicators
+      operationId: get_accounts_by_id_stats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":168}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/AccountStats"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /accounts/{id}/tags:
+    get:
+      tags: [accounts]
+      summary: Automatic tags and user labels
+      operationId: get_accounts_by_id_tags
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: "Account (G…/M…) or contract (C…) address."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"type":"array","items":{"$ref":"#/components/schemas/Tag"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /assets:
+    get:
+      tags: [markets]
+      summary: Most active assets
+      operationId: get_assets
+      description: "Cached (CACHE_TTL)."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/AssetActivity"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /assets/{key}:
+    get:
+      tags: [markets]
+      summary: Asset details, 24h totals and top pairs
+      operationId: get_assets_by_key
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: "Asset key (native, CODE:ISSUER, or C… contract)."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/AssetDetail"}}}
+        '404':
+          description: Not found
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /assets/{key}/holders:
+    get:
+      tags: [markets]
+      summary: Largest indexed holders
+      operationId: get_assets_by_key_holders
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: "Asset key (native, CODE:ISSUER, or C… contract)."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Holder"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /pairs:
+    get:
+      tags: [markets]
+      summary: Top pairs by verified fills
+      operationId: get_pairs
+      description: "Cached (CACHE_TTL)."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Pair"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /trades:
+    get:
+      tags: [markets]
+      summary: Fill feed
+      operationId: get_trades
+      parameters:
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor ledger.tx_index.op_index.trade_index."
+          schema: {"type":"string","pattern":"^[0-9]+(\\.[0-9]+){3}$"}
+        - name: base
+          in: query
+          required: false
+          description: "Base asset key (with counter)."
+          schema: {"type":"string"}
+        - name: counter
+          in: query
+          required: false
+          description: "Counter asset key (with base)."
+          schema: {"type":"string"}
+        - name: venue
+          in: query
+          required: false
+          description: "Venue."
+          schema: {"type":"string","enum":["sdex","amm","soroswap","aquarius","clmm","amm_generic"]}
+        - name: taker
+          in: query
+          required: false
+          description: "Taker address."
+          schema: {"type":"string"}
+        - name: pool
+          in: query
+          required: false
+          description: "Pool / offer id."
+          schema: {"type":"string"}
+        - name: verified
+          in: query
+          required: false
+          description: "Only verified (true) or unverified (false) fills."
+          schema: {"type":"boolean"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 1000, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Trade"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /price:
+    get:
+      tags: [markets]
+      summary: Last price and 24h statistics
+      operationId: get_price
+      parameters:
+        - name: base
+          in: query
+          required: true
+          description: "Base asset key."
+          schema: {"type":"string"}
+        - name: counter
+          in: query
+          required: true
+          description: "Counter asset key; prices are counter per base."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Ticker"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /candles:
+    get:
+      tags: [markets]
+      summary: OHLCV candles
+      operationId: get_candles
+      parameters:
+        - name: base
+          in: query
+          required: true
+          description: "Base asset key."
+          schema: {"type":"string"}
+        - name: counter
+          in: query
+          required: true
+          description: "Counter asset key; prices are counter per base."
+          schema: {"type":"string"}
+        - name: interval
+          in: query
+          required: false
+          description: "Candle interval."
+          schema: {"type":"string","enum":["1m","5m","15m","30m","1h","4h","1d"],"default":"1h"}
+        - name: from
+          in: query
+          required: false
+          description: "Start (default: to − 7 days)."
+          schema: {"type":"string","format":"date-time"}
+        - name: to
+          in: query
+          required: false
+          description: "End (default: newest indexed ledger)."
+          schema: {"type":"string","format":"date-time"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 5000, default: 500}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/CandlesResponse"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /pools:
+    get:
+      tags: [markets]
+      summary: Classic AMM pools
+      operationId: get_pools
+      parameters:
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 500, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/Pool"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /protocols:
+    get:
+      tags: [protocols]
+      summary: Per-protocol activity and fills per venue
+      operationId: get_protocols
+      description: "Verified events only unless verified=all; unverified counts are always reported. Cached."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - name: verified
+          in: query
+          required: false
+          description: "`all` includes events from contracts whose code is not allowlisted."
+          schema: {"type":"string","enum":["all"]}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Protocols"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /protocols/{name}/summary:
+    get:
+      tags: [protocols]
+      summary: One protocol's breakdown
+      operationId: get_protocols_by_name_summary
+      description: "Cached."
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: "Protocol."
+          schema: {"type":"string","enum":["aquarius","soroswap","blend","clmm","amm_generic"]}
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - name: verified
+          in: query
+          required: false
+          description: "`all` includes events from contracts whose code is not allowlisted."
+          schema: {"type":"string","enum":["all"]}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/ProtocolSummary"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /protocols/{name}/events:
+    get:
+      tags: [protocols]
+      summary: Decoded protocol events
+      operationId: get_protocols_by_name_events
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: "Protocol."
+          schema: {"type":"string","enum":["aquarius","soroswap","blend","clmm","amm_generic"]}
+        - name: before
+          in: query
+          required: false
+          description: "Keyset cursor ledger.tx_index.op_index.event_index."
+          schema: {"type":"string","pattern":"^[0-9]+(\\.[0-9]+){3}$"}
+        - name: action
+          in: query
+          required: false
+          description: "Event action."
+          schema: {"type":"string"}
+        - name: user
+          in: query
+          required: false
+          description: "User address."
+          schema: {"type":"string"}
+        - name: contract
+          in: query
+          required: false
+          description: "Contract id (C…)."
+          schema: {"type":"string"}
+        - name: asset
+          in: query
+          required: false
+          description: "Asset key: native/XLM, CODE:ISSUER or C… contract."
+          schema: {"type":"string"}
+        - name: verified
+          in: query
+          required: false
+          description: "`all` includes events from contracts whose code is not allowlisted."
+          schema: {"type":"string","enum":["all"]}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 1000, default: 50}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/ProtocolEvent"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /stats/network:
+    get:
+      tags: [stats]
+      summary: Ledger throughput over time
+      operationId: get_stats_network
+      description: "Cached."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - name: bucket
+          in: query
+          required: false
+          description: "Bucket size."
+          schema: {"type":"string","enum":["minute","hour","day"],"default":"hour"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/NetworkBucket"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /stats/operations:
+    get:
+      tags: [stats]
+      summary: Operation mix
+      operationId: get_stats_operations
+      description: "Cached."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/OperationMix"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /stats/tables:
+    get:
+      tags: [stats]
+      summary: Table sizes (partitioned tables summed)
+      operationId: get_stats_tables
+      description: "Cached."
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/TableSize"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /labels:
+    get:
+      tags: [labels]
+      summary: User labels
+      operationId: get_labels
+      parameters:
+        - name: tag
+          in: query
+          required: false
+          description: "Tag (with or without #)."
+          schema: {"type":"string"}
+        - name: address
+          in: query
+          required: false
+          description: "Address."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 2000, default: 200}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/LabelRow"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+    post:
+      tags: [labels]
+      summary: Add or update a label
+      operationId: post_labels
+      description: "Closed by default: requires Authorization: Bearer <LABELS_TOKEN> when LABELS_TOKEN is set, or LABELS_OPEN=true. 401 for a wrong token, 403 when writes are disabled."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {"$ref": "#/components/schemas/LabelInput"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/LabelRow"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '401':
+          description: Missing or invalid credentials
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '403':
+          description: Writes disabled
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /labels/tags:
+    get:
+      tags: [labels]
+      summary: Tag counts
+      operationId: get_labels_tags
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {type: array, items: {"$ref": "#/components/schemas/TagCount"}}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /labels/{address}/{tag}:
+    delete:
+      tags: [labels]
+      summary: Remove a label
+      operationId: delete_labels_by_address_by_tag
+      description: "Same write policy as POST /labels."
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: "Labelled address."
+          schema: {"type":"string"}
+        - name: tag
+          in: path
+          required: true
+          description: "Tag."
+          schema: {"type":"string"}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"type":"object","properties":{"deleted":{"type":"boolean"}}}}}
+        '401':
+          description: Missing or invalid credentials
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '403':
+          description: Writes disabled
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '404':
+          description: Not found
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /leaderboards:
+    get:
+      tags: [insights]
+      summary: Leaderboards
+      operationId: get_leaderboards
+      description: "Verified fills and events only. Rows of address boards carry `labels`. Cached."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 100, default: 15}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Leaderboards"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /alerts:
+    get:
+      tags: [insights]
+      summary: Notable events
+      operationId: get_alerts
+      description: "Cached."
+      parameters:
+        - name: hours
+          in: query
+          required: false
+          description: "Window length, ending at the newest indexed ledger."
+          schema: {"type":"integer","minimum":1,"maximum":2160,"default":24}
+        - name: min_xlm
+          in: query
+          required: false
+          description: "Minimum XLM value for large transfers and swaps."
+          schema: {"type":"number","default":25000}
+        - name: min_profit
+          in: query
+          required: false
+          description: "Minimum arbitrage profit (XLM)."
+          schema: {"type":"number","default":5}
+        - name: min_move
+          in: query
+          required: false
+          description: "Minimum hourly price move (%)."
+          schema: {"type":"number","default":5}
+        - name: kinds
+          in: query
+          required: false
+          description: "Comma-separated subset of large_transfer, large_trade, flash_loan, arbitrage, price_move, new_asset."
+          schema: {"type":"string"}
+        - {name: limit, in: query, required: false, description: 'Page size.', schema: {type: integer, minimum: 1, maximum: 1000, default: 200}}
+      responses:
+        '200':
+          description: OK
+          content: {application/json: {schema: {"$ref":"#/components/schemas/Alerts"}}}
+        '400':
+          description: Invalid parameter
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+components:
+  securitySchemes:
+    apiKey: {type: apiKey, in: header, name: X-API-Key, description: "Required only when the server sets API_KEYS (Authorization: Bearer is also accepted)."}
+    labelsToken: {type: http, scheme: bearer, description: "LABELS_TOKEN, for label writes."}
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+        request_id: {type: string}
+    Health:
+      type: object
+      properties: {status: {type: string, enum: [ok, down]}, reason: {type: string}}
+    Ready:
+      type: object
+      properties:
+        status: {type: string, enum: [ready, not ready]}
+        reason: {type: string}
+        last_closed_at: {type: [string, "null"], format: date-time}
+        lag_seconds: {type: integer}
+        max_lag_seconds: {type: integer}
+    Component:
+      type: object
+      description: Pipeline heartbeat (fetcher, writer).
+      properties:
+        name: {type: string}
+        role: {type: string}
+        ledger: {type: [integer, "null"]}
+        tip: {type: [integer, "null"]}
+        info: {type: object}
+        updated_at: {type: string, format: date-time}
+    Gap:
+      type: object
+      properties:
+        from_ledger: {type: integer}
+        to_ledger: {type: integer}
+        reason: {type: string}
+        detected_at: {type: string, format: date-time}
+    Status:
+      type: object
+      properties:
+        network: {type: string}
+        cursor: {type: [integer, "null"], description: Last fully indexed ledger.}
+        updated_at: {type: [string, "null"], format: date-time}
+        first_ledger: {type: [integer, "null"]}
+        last_closed_at: {type: [string, "null"], format: date-time}
+        ledgers_indexed: {type: integer}
+        components: {type: array, items: {$ref: "#/components/schemas/Component"}}
+        gaps: {type: integer, description: Ledger ranges never received.}
+        last_gap: {oneOf: [{$ref: "#/components/schemas/Gap"}, {type: "null"}]}
+        rpc_tip: {type: [integer, "null"], description: Highest tip reported by a component.}
+        lag_ledgers: {type: [integer, "null"]}
+        lag_seconds: {type: [integer, "null"], description: Wall-clock seconds since the newest indexed ledger closed.}
+    SearchHit:
+      type: object
+      properties:
+        kind: {type: string, enum: [ledger, transaction, pool, account, contract, asset, tag]}
+        id: {type: string}
+        label: {type: string}
+    Ledger:
+      type: object
+      properties:
+        sequence: {type: integer}
+        hash: {type: string}
+        prev_hash: {type: string}
+        closed_at: {type: string, format: date-time}
+        protocol: {type: integer}
+        tx_count: {type: integer}
+        tx_success: {type: integer}
+        tx_failed: {type: integer}
+        op_count: {type: integer}
+        soroban_tx_count: {type: integer}
+        base_fee: {type: integer}
+        base_reserve: {type: integer}
+        total_coins: {type: integer}
+        fee_pool: {type: integer}
+        fees_charged: {type: integer, description: Stroops.}
+        transactions: {type: array, items: {type: object}, description: "Only on /ledgers/{seq}."}
+    TransactionSummary:
+      type: object
+      properties:
+        id: {type: string, description: "TOID; use as the next page's before."}
+        hash: {type: string}
+        ledger: {type: integer}
+        tx_index: {type: integer}
+        closed_at: {type: string, format: date-time}
+        source: {type: string}
+        successful: {type: boolean}
+        result_code: {type: string}
+        op_count: {type: integer}
+        fee_charged: {type: integer}
+        is_soroban: {type: boolean}
+        contract_id: {type: [string, "null"]}
+        function: {type: [string, "null"]}
+        memo_type: {type: string}
+        memo: {type: string}
+    TransactionDetail:
+      allOf:
+        - $ref: "#/components/schemas/TransactionSummary"
+        - type: object
+          properties:
+            fee_account: {type: string}
+            seq_num: {type: integer}
+            max_fee: {type: integer}
+            resource_fee: {type: integer}
+            instructions: {type: integer}
+            inner_hash: {type: [string, "null"]}
+            operations: {type: array, items: {$ref: "#/components/schemas/Operation"}}
+            transfers: {type: array, items: {$ref: "#/components/schemas/Transfer"}}
+            trades: {type: array, items: {$ref: "#/components/schemas/Trade"}}
+            contract_events: {type: array, items: {$ref: "#/components/schemas/ContractEvent"}}
+            protocol_events: {type: array, items: {$ref: "#/components/schemas/ProtocolEvent"}}
+    Operation:
+      type: object
+      properties:
+        id: {type: string}
+        tx_hash: {type: string}
+        ledger: {type: integer}
+        op_index: {type: integer}
+        closed_at: {type: string, format: date-time}
+        type: {type: string}
+        source: {type: string}
+        successful: {type: boolean}
+        result_code: {type: string}
+        details: {type: object, description: Type-specific decoded fields; amounts in stroops.}
+    Transfer:
+      type: object
+      properties:
+        ledger: {type: integer}
+        tx_index: {type: integer}
+        transfer_index: {type: integer}
+        op_index: {type: [integer, "null"]}
+        closed_at: {type: string, format: date-time}
+        tx_hash: {type: string}
+        type: {type: string}
+        from_addr: {type: [string, "null"]}
+        to_addr: {type: [string, "null"]}
+        asset: {type: string}
+        amount: {type: string, description: Integer base units.}
+    Trade:
+      type: object
+      properties:
+        ledger: {type: integer}
+        tx_index: {type: integer}
+        op_index: {type: integer}
+        trade_index: {type: integer}
+        closed_at: {type: string, format: date-time}
+        tx_hash: {type: string}
+        venue: {type: string}
+        pool: {type: string}
+        maker: {type: string}
+        taker: {type: string}
+        sold_asset: {type: string}
+        sold_amount: {type: string}
+        bought_asset: {type: string}
+        bought_amount: {type: string}
+        base: {type: string}
+        counter: {type: string}
+        price: {type: number, description: Counter per base.}
+        base_volume: {type: number}
+        counter_volume: {type: number}
+        verified: {type: boolean, description: Classic venue or allowlisted pool code; only verified fills feed prices.}
+    ContractEvent:
+      type: object
+      properties:
+        ledger: {type: integer}
+        tx_index: {type: integer}
+        op_index: {type: integer}
+        event_index: {type: integer}
+        closed_at: {type: string, format: date-time}
+        tx_hash: {type: string}
+        contract_id: {type: string}
+        topic0: {type: string}
+        topics: {type: array, items: {}}
+        data: {}
+        protocol: {type: [string, "null"]}
+        verified: {type: boolean}
+        successful: {type: boolean}
+    ProtocolEvent:
+      type: object
+      properties:
+        ledger: {type: integer}
+        tx_index: {type: integer}
+        op_index: {type: integer}
+        event_index: {type: integer}
+        closed_at: {type: string, format: date-time}
+        tx_hash: {type: string}
+        protocol: {type: string}
+        contract_id: {type: string}
+        action: {type: string}
+        user_addr: {type: [string, "null"]}
+        asset: {type: [string, "null"]}
+        amount0: {type: [string, "null"]}
+        amount1: {type: [string, "null"]}
+        data: {}
+        verified: {type: boolean}
+    ContractActivity:
+      type: object
+      properties:
+        contract_id: {type: string}
+        protocol: {type: [string, "null"]}
+        verified: {type: boolean}
+        events: {type: integer}
+        event_txs: {type: integer}
+        last_seen: {type: [string, "null"], format: date-time}
+        topics: {type: [array, "null"], items: {type: string}}
+        calls: {type: integer}
+        failed_calls: {type: integer}
+        callers: {type: integer}
+        functions: {type: [array, "null"], items: {type: string}}
+        token: {type: [string, "null"]}
+    ContractSummary:
+      type: object
+      properties:
+        contract_id: {type: string}
+        protocol: {type: [string, "null"]}
+        events: {type: integer}
+        calls: {type: integer}
+        callers: {type: integer}
+        first_seen: {type: [string, "null"], format: date-time}
+        last_seen: {type: [string, "null"], format: date-time}
+        token: {type: [string, "null"]}
+        code:
+          oneOf:
+            - type: "null"
+            - type: object
+              properties:
+                executable: {type: string, enum: [wasm, stellar_asset, missing]}
+                wasm_hash: {type: [string, "null"]}
+                ledger: {type: integer}
+                checked_at: {type: string, format: date-time}
+        topics: {type: array, items: {type: object, properties: {topic0: {type: string}, events: {type: integer}}}}
+        functions: {type: array, items: {type: object, properties: {function: {type: [string, "null"]}, calls: {type: integer}, failed: {type: integer}}}}
+        protocol_actions: {type: array, items: {type: object, properties: {action: {type: string}, events: {type: integer}, verified: {type: integer}}}}
+        verification: {type: array, items: {type: object, properties: {protocol: {type: string}, verified_events: {type: integer}, unverified_events: {type: integer}}}}
+    AccountRank:
+      type: object
+      properties:
+        account_id: {type: string}
+        xlm: {type: number}
+        num_subentries: {type: integer}
+        home_domain: {type: string}
+        last_modified: {type: integer}
+    Account:
+      type: object
+      description: Indexed account entry (all columns of the accounts table plus xlm), or {account_id, state} when not indexed.
+      properties:
+        account_id: {type: string}
+        state: {type: string}
+        xlm: {type: number}
+        balance: {type: integer}
+        trustlines: {type: array, items: {type: object}}
+        offers: {type: array, items: {type: object}}
+        activity_24h: {type: object, properties: {txs: {type: integer}, transfers: {type: integer}, trades: {type: integer}, protocol_events: {type: integer}}}
+    Holding:
+      type: object
+      properties:
+        asset: {type: string}
+        kind: {type: string, enum: [native, trustline, token, pool_share, blend_supply, blend_borrow]}
+        amount: {type: number}
+        contract: {type: string}
+        price_xlm: {type: [number, "null"]}
+        value_xlm: {type: [number, "null"]}
+        value_usd: {type: [number, "null"]}
+        change_24h_pct: {type: [number, "null"]}
+        change_7d_pct: {type: [number, "null"]}
+        share: {type: number}
+        approx: {type: boolean}
+        parts: {type: array, items: {type: object, properties: {asset: {type: string}, amount: {type: number}}}}
+    Point:
+      type: object
+      properties:
+        t: {type: string, format: date-time}
+        value_xlm: {type: number}
+        value_usd: {type: [number, "null"]}
+    Portfolio:
+      type: object
+      properties:
+        account: {type: string}
+        known: {type: boolean}
+        created_ledger: {type: [integer, "null"]}
+        since_ledger: {type: integer}
+        usd_asset: {type: string}
+        usd_per_xlm: {type: [number, "null"]}
+        value_xlm: {type: number}
+        value_usd: {type: [number, "null"]}
+        assets_xlm: {type: number}
+        debt_xlm: {type: number}
+        change_24h_pct: {type: [number, "null"]}
+        change_7d_pct: {type: [number, "null"]}
+        unpriced: {type: integer, description: Holdings without a liquid XLM market.}
+        holdings: {type: array, items: {$ref: "#/components/schemas/Holding"}}
+        history: {type: array, items: {$ref: "#/components/schemas/Point"}}
+    PnL:
+      type: object
+      properties:
+        realized_xlm: {type: number}
+        unrealized_xlm: {type: number}
+        per_asset_realized_xlm: {type: object, additionalProperties: {type: number}}
+        open_qty: {type: object, additionalProperties: {type: number}}
+        matched_sells: {type: integer}
+    Cycle:
+      type: object
+      properties:
+        tx_hash: {type: string}
+        closed_at: {type: string}
+        asset: {type: string}
+        hops: {type: integer}
+        profit: {type: number}
+        profit_xlm: {type: number}
+    Trading:
+      type: object
+      properties:
+        trades: {type: integer}
+        truncated: {type: boolean}
+        volume_xlm: {type: number}
+        venues: {type: array, items: {type: object, properties: {venue: {type: string}, trades: {type: integer}, volume_xlm: {type: number}}}}
+        pairs: {type: array, items: {type: object, properties: {base: {type: string}, counter: {type: string}, trades: {type: integer}, volume_xlm: {type: number}}}}
+        pnl: {$ref: "#/components/schemas/PnL"}
+        cycles: {type: integer}
+        cycle_profit_xlm: {type: number}
+        top_cycles: {type: array, items: {$ref: "#/components/schemas/Cycle"}}
+    AccountStats:
+      type: object
+      properties:
+        account: {type: string}
+        hours: {type: integer}
+        trading: {$ref: "#/components/schemas/Trading"}
+        usd_per_xlm: {type: number}
+        txs: {type: object}
+        seen: {type: object, properties: {first_seen: {type: [string, "null"]}, last_seen: {type: [string, "null"]}, window_start: {type: string}}}
+        protocols: {type: array, items: {type: object}}
+        heatmap: {type: array, items: {type: object, properties: {dow: {type: integer}, hour: {type: integer}, txs: {type: integer}}}}
+        largest_transfers: {type: array, items: {type: object}}
+        counterparties: {type: array, items: {type: object}}
+        flows: {type: array, items: {type: object}}
+    Tag:
+      type: object
+      properties:
+        id: {type: string}
+        label: {type: string}
+        reason: {type: string}
+        group: {type: string, enum: [size, behavior, role, defi, lifecycle, user]}
+        kind: {type: string, enum: [auto, user]}
+        note: {type: string}
+    AssetActivity:
+      type: object
+      properties:
+        asset_key: {type: string}
+        type: {type: string}
+        code: {type: [string, "null"]}
+        issuer: {type: [string, "null"]}
+        contract_id: {type: [string, "null"]}
+        trades: {type: integer}
+        volume: {type: number}
+        transfers: {type: integer}
+        holders_indexed: {type: integer}
+    AssetDetail:
+      type: object
+      properties:
+        asset_key: {type: string}
+        type: {type: string}
+        code: {type: [string, "null"]}
+        issuer: {type: [string, "null"]}
+        contract_id: {type: [string, "null"]}
+        first_seen: {type: integer}
+        stats_24h: {type: object}
+        top_pairs: {type: array, items: {type: object}}
+    Holder:
+      type: object
+      properties:
+        account_id: {type: string}
+        balance: {type: number}
+        trust_limit: {type: number}
+        flags: {type: integer}
+        last_modified: {type: integer}
+    Pair:
+      type: object
+      properties:
+        base: {type: string}
+        counter: {type: string}
+        trades: {type: integer}
+        base_volume: {type: number}
+        counter_volume: {type: number}
+        vwap: {type: [number, "null"]}
+        last_price: {type: number}
+        venues: {type: array, items: {type: string}}
+    Ticker:
+      type: object
+      properties:
+        base: {type: string}
+        counter: {type: string}
+        last: {type: [number, "null"]}
+        last_trade_at: {type: [string, "null"], format: date-time}
+        open_24h: {type: [number, "null"]}
+        high_24h: {type: [number, "null"]}
+        low_24h: {type: [number, "null"]}
+        base_volume_24h: {type: [number, "null"]}
+        counter_volume_24h: {type: [number, "null"]}
+        trades_24h: {type: [integer, "null"]}
+        change_24h_pct: {type: number}
+    Candle:
+      type: object
+      properties:
+        t: {type: string, format: date-time}
+        open: {type: number}
+        high: {type: number}
+        low: {type: number}
+        close: {type: number}
+        base_volume: {type: number}
+        counter_volume: {type: number}
+        trades: {type: integer}
+    CandlesResponse:
+      type: object
+      properties:
+        base: {type: string}
+        counter: {type: string}
+        interval: {type: string}
+        candles: {type: array, items: {$ref: "#/components/schemas/Candle"}}
+    Pool:
+      type: object
+      properties:
+        pool_id: {type: string}
+        asset_a: {type: string}
+        asset_b: {type: string}
+        reserve_a: {type: number}
+        reserve_b: {type: number}
+        price_b_per_a: {type: [number, "null"]}
+        total_shares: {type: integer}
+        trustline_count: {type: integer}
+        fee_bp: {type: integer}
+        last_modified: {type: integer}
+    Protocols:
+      type: object
+      properties:
+        hours: {type: integer}
+        include_unverified: {type: boolean}
+        protocols:
+          type: array
+          items:
+            type: object
+            properties:
+              protocol: {type: string}
+              events: {type: integer}
+              unverified_events: {type: integer}
+              users: {type: integer}
+              contracts: {type: integer}
+              txs: {type: integer}
+              actions: {type: object, additionalProperties: {type: integer}}
+        trade_venues:
+          type: array
+          items: {type: object, properties: {venue: {type: string}, trades: {type: integer}, unverified_trades: {type: integer}, pools: {type: integer}, takers: {type: integer}}}
+    ProtocolSummary:
+      type: object
+      properties:
+        protocol: {type: string}
+        hours: {type: integer}
+        include_unverified: {type: boolean}
+        unverified_events: {type: integer}
+        actions: {type: array, items: {type: object}}
+        by_asset: {type: array, items: {type: object}}
+        contracts: {type: array, items: {type: object}}
+        users: {type: array, items: {type: object}}
+        pools: {type: array, items: {type: object}}
+        timeline: {type: array, items: {type: object}}
+    NetworkBucket:
+      type: object
+      properties:
+        t: {type: string, format: date-time}
+        ledgers: {type: integer}
+        txs: {type: integer}
+        txs_ok: {type: integer}
+        txs_failed: {type: integer}
+        ops: {type: integer}
+        soroban_txs: {type: integer}
+        fees_xlm: {type: number}
+        avg_txs_per_ledger: {type: number}
+        protocol: {type: integer}
+    OperationMix:
+      type: object
+      properties:
+        type: {type: string}
+        ops: {type: integer}
+        successful: {type: integer}
+        sources: {type: integer}
+    TableSize:
+      type: object
+      properties:
+        table: {type: string}
+        rows_estimate: {type: integer}
+        bytes: {type: integer}
+        partitions: {type: [integer, "null"]}
+    LabelInput:
+      type: object
+      required: [address, tag]
+      properties:
+        address: {type: string, description: "G…, M… or C… strkey."}
+        tag: {type: string, pattern: "^#?[a-z0-9][a-z0-9_.-]{0,31}$", description: Normalized to lowercase.}
+        note: {type: string, maxLength: 280}
+    LabelRow:
+      type: object
+      properties:
+        address: {type: string}
+        tag: {type: string}
+        note: {type: string}
+        created_at: {type: string, format: date-time}
+        xlm: {type: [number, "null"]}
+    TagCount:
+      type: object
+      properties:
+        tag: {type: string}
+        addresses: {type: integer}
+        last_used: {type: string, format: date-time}
+    Leaderboards:
+      type: object
+      properties:
+        hours: {type: integer}
+        traders: {type: array, items: {type: object}}
+        arbitrageurs: {type: array, items: {type: object}}
+        active: {type: array, items: {type: object}}
+        fee_payers: {type: array, items: {type: object}}
+        pools: {type: array, items: {type: object}}
+        protocol_users: {type: array, items: {type: object}}
+        whales: {type: array, items: {type: object}}
+    Alert:
+      type: object
+      properties:
+        kind: {type: string, enum: [large_transfer, large_trade, flash_loan, arbitrage, price_move, new_asset]}
+        ledger: {type: [integer, "null"]}
+        closed_at: {type: string, format: date-time}
+        tx_hash: {type: [string, "null"]}
+        action: {type: [string, "null"]}
+        from_addr: {type: [string, "null"]}
+        to_addr: {type: [string, "null"]}
+        asset: {type: [string, "null"]}
+        amount: {type: [number, "null"]}
+        asset2: {type: [string, "null"]}
+        amount2: {type: [number, "null"]}
+        value_xlm: {type: [number, "null"]}
+        change_pct: {type: number}
+        trades: {type: integer}
+    Alerts:
+      type: object
+      properties:
+        hours: {type: integer}
+        min_xlm: {type: number}
+        min_move_pct: {type: number}
+        min_profit_xlm: {type: number}
+        counts: {type: object, additionalProperties: {type: integer}}
+        alerts: {type: array, items: {$ref: "#/components/schemas/Alert"}}

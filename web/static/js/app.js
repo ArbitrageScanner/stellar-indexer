@@ -197,16 +197,20 @@ function closeMenu() { sidebar.classList.remove('open'); scrim.classList.remove(
 document.getElementById('menu-btn').addEventListener('click', () => { sidebar.classList.add('open'); scrim.classList.add('open'); });
 scrim.addEventListener('click', closeMenu);
 
-const dlg = document.getElementById('settings'), baseInput = document.getElementById('api-base'), tokenInput = document.getElementById('labels-token');
+const dlg = document.getElementById('settings'), baseInput = document.getElementById('api-base'), tokenInput = document.getElementById('labels-token'),
+  keyInput = document.getElementById('api-key');
 document.getElementById('settings-btn').addEventListener('click', () => {
   baseInput.value = apiBase();
-  try { tokenInput.value = localStorage.getItem('labelsToken') || ''; } catch {}
+  try { tokenInput.value = localStorage.getItem('labelsToken') || ''; keyInput.value = localStorage.getItem('apiKey') || ''; } catch {}
   dlg.showModal();
 });
 dlg.addEventListener('close', () => {
   if (dlg.returnValue === 'save') {
     setApiBase(baseInput.value.trim());
-    try { tokenInput.value.trim() ? localStorage.setItem('labelsToken', tokenInput.value.trim()) : localStorage.removeItem('labelsToken'); } catch {}
+    try {
+      tokenInput.value.trim() ? localStorage.setItem('labelsToken', tokenInput.value.trim()) : localStorage.removeItem('labelsToken');
+      keyInput.value.trim() ? localStorage.setItem('apiKey', keyInput.value.trim()) : localStorage.removeItem('apiKey');
+    } catch {}
   } else if (dlg.returnValue === 'reset') setApiBase('');
   else return;
   state.network = '';

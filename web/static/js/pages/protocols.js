@@ -39,6 +39,7 @@ export default async function protocols(view, _p, query, ctx) {
           <div><h2>${protoName(p.protocol)}</h2><div class="muted" style="font-size:12px">${m?.kind || 'Protocol'} · ${num(p.contracts)} contracts</div></div></div>
         ${m ? html`<div class="muted" style="font-size:12.5px">${m.about}</div>` : ''}
         <div class="nums"><div><b>${compact(p.events)}</b>events</div><div><b>${compact(p.txs)}</b>txs</div><div><b>${compact(p.users)}</b>users</div></div>
+        ${p.unverified_events ? html`<div class="muted" style="font-size:12px"><span class="badge warn">unverified</span> ${compact(p.unverified_events)} events from contracts whose code is not allowlisted (excluded above)</div>` : ''}
         ${stackbar(parts, { fmt: compact })}
       </a>`;
     })}`;

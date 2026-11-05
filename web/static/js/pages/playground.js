@@ -4,8 +4,10 @@ import { html, setHTML, pageHead, jsonHTML, bytes, num, icon, raw, tabs, bindTab
 // Endpoint catalog. {x} placeholders are filled from live samples.
 const CATALOG = [
   ['Status', [
-    ['/status', 'Cursor, ingestion lag (ledgers and seconds) and RPC tip.'],
-    ['/health', 'Database ping; 503 when Postgres is unreachable.'],
+    ['/status', 'Cursor, ingestion lag, pipeline component heartbeats and ledger gaps.'],
+    ['/health', 'Liveness: database ping; 503 when Postgres is unreachable.'],
+    ['/ready', 'Readiness: 503 when Postgres is down or the newest ledger is older than READY_MAX_LAG.'],
+    ['/openapi.yaml', 'OpenAPI 3.1 specification of every endpoint.'],
     ['/search?q={ledger}', 'Classify a ledger number, tx hash, G…/C… address or asset code.'],
     ['/stats/tables', 'Table sizes and row estimates.'],
   ]],
@@ -91,7 +93,7 @@ export default async function playground(view, _p, query, ctx) {
   if (!ctx.alive()) return;
   const items = CATALOG.flatMap(([g, list]) => list.map(([p, d]) => ({ g, path: fill(p, s), tpl: p, d })));
   const listEl = view.querySelector('#list');
-  setHTML(listEl, html`${CATALOG.map(([g]) => html`<div class="grp">${g}</div>${items.filter((i) => i.g === g).map((i) => html`<a href="javascript:void 0" data-path="${i.path}"><span class="m">GET</span><span class="p">${i.tpl.split('?')[0]}</span>${i.tpl.includes('?') ? html`<span class="muted">?${i.tpl.split('?')[1]}</span>` : ''}</a>`)}`)}`);
+  setHTML(listEl, html`${CATALOG.map(([g]) => html`<div class="grp">${g}</div>${items.filter((i) => i.g === g).map((i) => html`<a role="button" tabindex="0" data-path="${i.path}"><span class="m">GET</span><span class="p">${i.tpl.split('?')[0]}</span>${i.tpl.includes('?') ? html`<span class="muted">?${i.tpl.split('?')[1]}</span>` : ''}</a>`)}`)}`);
 
   const pathEl = view.querySelector('#path'), descEl = view.querySelector('#desc');
   let lang = 'curl', last = null;

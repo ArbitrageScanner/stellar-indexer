@@ -406,3 +406,6 @@ details.raw[open] > summary::before { content: "▾ "; }
 :root { --h1: #cde2fb; --h2: #9ec5f4; --h3: #6da7ec; --h4: #3987e5; --h5: #256abf; --h6: #184f95; }
 :root[data-theme="dark"] { --h1: #104281; --h2: #1c5cab; --h3: #2a78d6; --h4: #5598e7; --h5: #86b6ef; --h6: #cde2fb; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --h1: #104281; --h2: #1c5cab; --h3: #2a78d6; --h4: #5598e7; --h5: #86b6ef; --h6: #cde2fb; } }
+
+.badge.warn { color: var(--ink); border-color: color-mix(in srgb, var(--warning) 60%, transparent); background: color-mix(in srgb, var(--warning) 18%, var(--surface)); }
+.tabs a, .pg-list a { cursor: pointer; }

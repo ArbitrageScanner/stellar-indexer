@@ -1,5 +1,5 @@
 import { get, qs } from '../api.js';
-import { html, setHTML, feed, pageHead, seg, bindSeg, when, venue, asset, amt7, price, addr, txLink, pairLink, VENUE_LABEL } from '../ui.js';
+import { html, setHTML, feed, pageHead, seg, bindSeg, when, venue, unverified, asset, amt7, price, addr, txLink, pairLink, VENUE_LABEL } from '../ui.js';
 
 export default async function trades(view, _p, query, ctx) {
   let venueF = query.venue || '';
@@ -17,7 +17,7 @@ export default async function trades(view, _p, query, ctx) {
       cursor: (t) => `${t.ledger}.${t.tx_index}.${t.op_index}.${t.trade_index}`,
       cols: [
         { h: 'Time', v: (t) => when(t.closed_at) },
-        { h: 'Venue', v: (t) => venue(t.venue) },
+        { h: 'Venue', v: (t) => html`${venue(t.venue)}${unverified(t)}` },
         { h: 'Pair', v: (t) => pairLink(t.base, t.counter) },
         { h: 'Sold', cls: 'num', v: (t) => html`${amt7(t.sold_amount)} ${asset(t.sold_asset)}` },
         { h: 'Bought', cls: 'num', v: (t) => html`${amt7(t.bought_amount)} ${asset(t.bought_asset)}` },

@@ -287,6 +287,12 @@ export const okBadge = (ok) => ok
 
 export const tag = (s) => html`<span class="tag">${s}</span>`;
 
+// unverified marks rows whose contract code is not allowlisted for the
+// protocol: stored and shown, but excluded from prices and analytics.
+export const unverified = (row) => row && row.verified === false
+  ? html` <span class="badge warn" title="Contract code is not allowlisted for this protocol: kept for inspection, excluded from prices and analytics">unverified</span>`
+  : '';
+
 // ---- JSON -------------------------------------------------------------------
 
 // jsonHTML pretty-prints a value with syntax colors; strkeys become links.
@@ -358,6 +364,11 @@ export function table(cols, rows, { emptyTitle = 'No rows', emptyText = '', rowH
     <tbody>${rows.map((r) => html`<tr ${raw(rowHref ? `class="click" data-href="${esc(rowHref(r))}"` : '')}>${cols.map((c) => html`<td class="${c.cls || ''}">${c.v(r)}</td>`)}</tr>`)}</tbody>
   </table></div>`;
 }
+
+// Enter/Space activate role=tab / role=button anchors (they have no href).
+document.addEventListener('keydown', (e) => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[role=tab],[role=button]')) { e.preventDefault(); e.target.click(); }
+});
 
 document.addEventListener('click', (e) => {
   const tr = e.target.closest('tr[data-href]');
@@ -456,7 +467,7 @@ export function kv(pairs) {
 }
 
 export function tabs(items, current) {
-  return html`<div class="tabs">${items.map(([id, label, count]) => html`<a href="javascript:void 0" data-tab="${id}" class="${id === current ? 'on' : ''}">${label}${count !== undefined ? html`<span class="count">${count}</span>` : ''}</a>`)}</div>`;
+  return html`<div class="tabs">${items.map(([id, label, count]) => html`<a role="tab" tabindex="0" data-tab="${id}" class="${id === current ? 'on' : ''}">${label}${count !== undefined ? html`<span class="count">${count}</span>` : ''}</a>`)}</div>`;
 }
 
 export function bindTabs(root, onPick) {

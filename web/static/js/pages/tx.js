@@ -1,6 +1,6 @@
 import { get } from '../api.js';
 import { html, setHTML, load, pageHead, card, kv, table, num, amount, amt7, dt, ago, addr, ledgerLink, okBadge, tag, expert, copyBtn,
-  asset, venue, price, json, snake, tabs, bindTabs, empty, VENUE_LABEL } from '../ui.js';
+  asset, venue, price, json, snake, tabs, bindTabs, empty, VENUE_LABEL, unverified } from '../ui.js';
 import { opSummary } from '../ops.js';
 
 export default async function tx(view, [hash]) {
@@ -66,7 +66,7 @@ function render(id, t) {
     case 'trades':
       return table([
         { h: 'Op', cls: 'num', v: (r) => String(r.op_index + 1) },
-        { h: 'Venue', v: (r) => venue(r.venue) },
+        { h: 'Venue', v: (r) => html`${venue(r.venue)}${unverified(r)}` },
         { h: 'Sold', cls: 'num', v: (r) => html`${amt7(r.sold_amount)} ${asset(r.sold_asset)}` },
         { h: 'Bought', cls: 'num', v: (r) => html`${amt7(r.bought_amount)} ${asset(r.bought_asset)}` },
         { h: 'Price', cls: 'num', v: (r) => html`${price(r.price)} <span class="muted">${asset(r.counter, { link: false })}/${asset(r.base, { link: false })}</span>` },
@@ -75,7 +75,7 @@ function render(id, t) {
     case 'protocol':
       return table([
         { h: 'Protocol', v: (r) => html`<a href="#/protocol/${r.protocol}">${VENUE_LABEL[r.protocol] || r.protocol}</a>` },
-        { h: 'Action', v: (r) => tag(r.action) },
+        { h: 'Action', v: (r) => html`${tag(r.action)}${unverified(r)}` },
         { h: 'Contract', v: (r) => addr(r.contract_id) },
         { h: 'User', v: (r) => addr(r.user_addr) },
         { h: 'Asset', v: (r) => r.asset ? asset(r.asset) : '—' },
@@ -84,7 +84,7 @@ function render(id, t) {
       ], t.protocol_events, { emptyTitle: 'No decoded protocol events' });
     case 'events':
       return t.contract_events.length ? html`<div class="flow">${t.contract_events.map((e) => html`<div class="flow-item"><div class="n">${e.event_index}</div><div>
-        <div class="line">${addr(e.contract_id)} ${e.protocol ? tag(e.protocol) : ''} <span class="muted">op ${e.op_index + 1}</span></div>
+        <div class="line">${addr(e.contract_id)} ${e.protocol ? html`${tag(e.protocol)}${unverified(e)}` : ''} <span class="muted">op ${e.op_index + 1}</span></div>
         <div class="grid g2 det" style="gap:8px"><div><div class="muted" style="font-size:11px">topics</div>${json(e.topics, 'inline')}</div><div><div class="muted" style="font-size:11px">data</div>${json(e.data, 'inline')}</div></div></div></div>`)}</div>`
         : empty('No contract events', 'Token events are under Token transfers; other contract events appear here.');
     default:

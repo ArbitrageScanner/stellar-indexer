@@ -14,7 +14,15 @@ export default async function contract(view, [id]) {
       ${tile('Events emitted', num(c.events))}
       ${tile('Label', c.token ? asset(c.token) : c.protocol ? protoName(c.protocol) : html`<span class="muted">unknown</span>`, { foot: c.token ? 'Stellar Asset Contract / token' : c.protocol ? 'decoded protocol' : 'no decoder matched' })}
       ${tile('Last event', c.last_seen ? when(c.last_seen) : '—', { foot: c.first_seen ? `first ${dt(c.first_seen)}` : '' })}
+      ${tile('Code', c.code ? c.code.executable : html`<span class="muted">unknown</span>`, { foot: c.code?.wasm_hash ? `wasm ${c.code.wasm_hash.slice(0, 12)}…` : c.code ? `seen at ledger ${num(c.code.ledger)}` : 'not resolved yet', title: c.code?.wasm_hash || '' })}
     </div>
+    ${(c.verification || []).length ? card('Protocol verification', html`${table([
+      { h: 'Protocol', v: (v) => html`<a href="#/protocol/${v.protocol}">${protoName(v.protocol)}</a>` },
+      { h: 'Status', v: (v) => v.unverified_events === 0 ? html`<span class="badge ok">verified code</span>` : v.verified_events === 0 ? html`<span class="badge warn">unverified code</span>` : html`<span class="badge warn">mixed</span>` },
+      { h: 'Verified events', cls: 'num', v: (v) => num(v.verified_events) },
+      { h: 'Unverified events', cls: 'num', v: (v) => num(v.unverified_events) },
+    ], c.verification)}${c.code?.wasm_hash ? html`<div class="muted" style="font-size:12px;padding:10px 16px">wasm hash <span class="mono">${c.code.wasm_hash}</span>${copyBtn(c.code.wasm_hash)} · checked ${when(c.code.checked_at)}</div>` : ''}`, { flush: true, hint: 'events count only when the contract code is allowlisted for the protocol' }) : ''}
+    <div style="height:16px"></div>
     <div class="grid g3" style="margin-bottom:16px">
       ${card('Functions called', table([
         { h: 'Function', v: (f) => html`<a href="#/txs?contract=${id}&function=${encodeURIComponent(f.function || '')}"><b>${f.function || '—'}</b></a>` },

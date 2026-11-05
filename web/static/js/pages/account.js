@@ -1,7 +1,7 @@
 import { get, qs } from '../api.js';
 import { html, setHTML, load, feed, pageHead, card, tile, kv, table, num, compact, amount, amt7, price, pct, when, ago, dt, addr, txLink,
   ledgerLink, asset, venue, tag, expert, copyBtn, snake, tabs, bindTabs, icon, hbars, seg, bindSeg, raw, empty, state, pairLink,
-  VENUE_LABEL, venueColor } from '../ui.js';
+  VENUE_LABEL, venueColor, unverified } from '../ui.js';
 import { line, donut, heatmap } from '../charts.js';
 import { opSummary } from '../ops.js';
 import { tagBar, watchBtn, bindWatch } from '../tags.js';
@@ -183,7 +183,7 @@ function activity(view, id) {
     } else if (t === 'trades') {
       load(tab, () => get(`/accounts/${id}/trades?limit=200`), (rows) => table([
         { h: 'Time', v: (r) => when(r.closed_at) },
-        { h: 'Venue', v: (r) => venue(r.venue) },
+        { h: 'Venue', v: (r) => html`${venue(r.venue)}${unverified(r)}` },
         { h: 'Sold', cls: 'num', v: (r) => html`${amt7(r.sold_amount)} ${asset(r.sold_asset)}` },
         { h: 'Bought', cls: 'num', v: (r) => html`${amt7(r.bought_amount)} ${asset(r.bought_asset)}` },
         { h: 'Price', cls: 'num', v: (r) => price(r.price) },
@@ -194,7 +194,7 @@ function activity(view, id) {
       load(tab, () => get(`/accounts/${id}/events?limit=200`), (rows) => table([
         { h: 'Time', v: (r) => when(r.closed_at) },
         { h: 'Protocol', v: (r) => html`<a href="#/protocol/${r.protocol}">${protoName(r.protocol)}</a>` },
-        { h: 'Action', v: (r) => tag(r.action) },
+        { h: 'Action', v: (r) => html`${tag(r.action)}${unverified(r)}` },
         { h: 'Asset', v: (r) => r.asset ? asset(r.asset) : '—' },
         { h: 'Amount', cls: 'num', v: (r) => r.amount0 ? amt7(r.amount0) : '—' },
         { h: 'Contract', v: (r) => addr(r.contract_id) },
