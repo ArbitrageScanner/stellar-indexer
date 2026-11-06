@@ -144,7 +144,7 @@ The private side runs in its own namespace on a k3s node shared with other workl
 The CI identity is the ServiceAccount `stellar-indexer/ci-deployer`, bound to the built-in `edit` ClusterRole by a RoleBinding. It can manage workloads, Services, Secrets, PVCs and NetworkPolicies in this namespace only. It cannot read other namespaces, nodes or cluster-scoped objects, and it cannot change RBAC or the quota (checked with `kubectl auth can-i`).
 
 ### CI/CD
-`.github/workflows/ci.yml` runs lint, tests, the Docker build and the testnet e2e. On `main`, it then publishes `ghcr.io/<owner>/stellar-{indexer,gateway,tunnel}:<sha>` and, when the variable `DEPLOY_ENABLED=true` is set, calls `deploy.yml`. That workflow deploys k3s first (migrations run there), then the edge, then smoke-tests `https://<EDGE_DOMAIN>/ready` and `/ui/`. To roll back, run `deploy.yml` by hand with an older sha. The secrets and variables (GitHub environment `production`) are listed at the top of `deploy.yml`.
+`.github/workflows/ci.yml` runs lint, tests, the Docker build and the testnet e2e. On `main`, it then publishes `ghcr.io/<owner>/stellar-{indexer,gateway,tunnel}:<sha>` and, when the variable `DEPLOY_ENABLED=true` is set, calls `deploy.yml`. That workflow deploys k3s first (migrations run there), then the edge, then smoke-tests `https://<EDGE_DOMAIN>/ready` and `/ui/`. To roll back, run `deploy.yml` by hand with an older sha. The secrets and variables (repository level: environment secrets are unavailable on private GitHub Free repos) are listed at the top of `deploy.yml`.
 
 All three indexer processes run the same tag. Old binaries refuse a database at a newer migration, so never pin them to different shas.
 
