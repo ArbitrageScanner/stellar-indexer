@@ -45,6 +45,7 @@ Dependencies point one way: `api → query → analytics` and `api → analytics
 | `READY_MAX_LAG` | `ReadyMaxLag` | `/ready` returns 503 when the newest ledger is older; 0 = no lag check. |
 | `LABELS_TOKEN` / `LABELS_OPEN` | `LabelsToken` / `LabelsOpen` | Label write policy (see above). |
 | `USD_ASSET` | `USDAsset` | Asset whose XLM market prices XLM in USD. |
+| `LOGO_FETCH` | — (`cmd/indexer`) | Run the SEP-1 logo resolver next to the API (default `true`). |
 | — | `Network`, `CursorName`, `UI` | Shown in `/status`; ingest cursor; embedded explorer (`/ui/`). |
 
 ## Probes

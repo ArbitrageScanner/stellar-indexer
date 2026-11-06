@@ -35,6 +35,7 @@ small deployments and development (`docker compose --profile direct`).
 | `internal/metrics` | The Prometheus registry and every exported metric |
 | `internal/httpx` | HTTP building blocks shared by the API and the gateway (request IDs, CORS, security headers, keys, rate limit, cache) |
 | `internal/gateway`, `cmd/gateway` | Public edge for split deployments (ADR-10) |
+| `internal/logos` | SEP-1 asset images: issuer home_domain → stellar.toml → validated, re-encoded PNG (ADR-11) |
 | `cmd/indexer` | Wiring and process lifecycle only |
 
 ## Decisions
@@ -124,6 +125,25 @@ replaces client-supplied forwarding headers, and never exposes upstream
 error details. Shared HTTP building blocks live in `internal/httpx`, so both
 sides apply the same rules. A compromised edge yields no database access and
 no data beyond the public read API.
+
+### ADR-11: asset logos are vouched for, re-encoded and served same-origin
+The explorer shows two kinds of logo. Protocol marks, XLM and the assets of
+the StellarExpert Top 50 SEP-42 list are bundled in `web/static/logos` and
+matched by exact `CODE:ISSUER` or SAC contract id (never by code, which
+anyone can issue). Every other classic asset is resolved by
+`internal/logos`, which runs in the `api` process (`LOGO_FETCH`). It reads
+the issuer's `home_domain` from the index or, in one batched
+`getLedgerEntries` call, from RPC; fetches `stellar.toml`; and accepts the
+image only when a `[[CURRENCIES]]` entry lists this exact code and issuer.
+Downloads go through a client that dials only public unicast addresses after
+DNS resolution, follows at most three https redirects and caps the body at
+2 MB. The image must sniff as PNG, JPEG, GIF or WebP (never SVG). It is
+checked for its pixel count before decoding, then decoded and re-encoded as a
+PNG of at most 128 px, so only pixels this process produced are stored
+(`asset_logos`) and served from `/assets/{key}/logo` on the explorer's own
+origin. The UI CSP keeps `img-src 'self'`, and the browser never contacts
+issuer hosts. Rows are rechecked weekly (daily after none/error), and a
+transient failure never drops a stored image.
 
 ## Failure behaviour
 

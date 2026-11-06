@@ -213,6 +213,7 @@ All settings are environment variables, validated at startup (an invalid combina
 | `PROTOCOL_VERIFY` / `PROTOCOL_ALLOWLIST_FILE` | `enforce` / — | protocol contract verification |
 | `API_KEYS`, `RATE_LIMIT_RPS`, `CORS_ORIGINS`, `CACHE_TTL`, `READY_MAX_LAG` | —, `20`, `*`, `10s`, `2m` | API hardening (docs/API.md) |
 | `LABELS_TOKEN` / `LABELS_OPEN` | — / `false` | label write policy |
+| `LOGO_FETCH` | `true` | resolve issuer images from SEP-1 stellar.toml in the API process (outbound HTTPS to issuer domains); `false` keeps only the UI's bundled logos |
 | `METRICS_ADDR` | `:9100` | `/metrics` and `/health` of `fetch` and `write` |
 | `LOG_FORMAT` | `text` | `json` for log shipping (compose default) |
 

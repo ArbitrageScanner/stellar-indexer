@@ -664,6 +664,62 @@ paths:
           content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
         '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
         '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /assets/{key}/logo:
+    get:
+      tags: [markets]
+      summary: Issuer-published asset image
+      description: >-
+        The image the issuer's home domain publishes for this exact code and issuer in its SEP-1
+        stellar.toml ([[CURRENCIES]] image), fetched and validated by the indexer. Only PNG, JPEG, GIF
+        and WebP up to 100 KB are stored. A contract id resolves to the image of its Stellar Asset
+        Contract's classic asset. With ?v= equal to the version from /logos the response is immutable.
+      operationId: get_assets_by_key_logo
+      parameters:
+        - name: key
+          in: path
+          required: true
+          description: "Asset key (CODE:ISSUER) or the C… id of its Stellar Asset Contract."
+          schema: {"type":"string"}
+        - {name: v, in: query, required: false, description: 'Content version from /logos (cache-busting).', schema: {type: string}}
+      responses:
+        '200':
+          description: The image
+          headers: {ETag: {schema: {type: string}}, Cache-Control: {schema: {type: string}}}
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/gif: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+        '304': {description: Not modified (If-None-Match matched the ETag)}
+        '404':
+          description: No image published for this asset
+          content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
+  /logos:
+    get:
+      tags: [markets]
+      summary: Assets with an issuer-published image
+      description: Every asset whose image the resolver stored, with its Stellar Asset Contract id (when indexed) and a content version for /assets/{key}/logo?v=.
+      operationId: get_logos
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  logos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        asset: {type: string, description: CODE:ISSUER}
+                        contract: {type: string, nullable: true, description: Stellar Asset Contract id}
+                        v: {type: string, description: Content version (first 12 hex of the SHA-256)}
+        '429': {description: Rate limited, headers: {Retry-After: {schema: {type: integer}}}}
+        '500': {description: Internal error, content: {application/json: {schema: {"$ref": "#/components/schemas/Error"}}}}
   /pairs:
     get:
       tags: [markets]

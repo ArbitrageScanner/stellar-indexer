@@ -26,6 +26,7 @@ x-indexer: &indexer
     RETAIN_MARKET_LEDGERS: ${RETAIN_MARKET_LEDGERS:-0}
     RETAIN_CANDLE_LEDGERS: ${RETAIN_CANDLE_LEDGERS:-0}
     LOG_FORMAT: json
+    LOGO_FETCH: ${LOGO_FETCH:-true}
   logging: &logging
     driver: json-file
     options: { max-size: "50m", max-file: "5" }

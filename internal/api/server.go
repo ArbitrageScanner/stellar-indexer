@@ -108,6 +108,8 @@ func (s *Server) routes() []route {
 		{"GET", "/assets", s.assets, true},
 		{"GET", "/assets/{key}", s.asset, false},
 		{"GET", "/assets/{key}/holders", s.assetHolders, false},
+		{"GET", "/assets/{key}/logo", s.assetLogo, false},
+		{"GET", "/logos", s.logos, true},
 		{"GET", "/pairs", s.pairs, true},
 		{"GET", "/trades", s.trades, false},
 		{"GET", "/price", s.price, false},

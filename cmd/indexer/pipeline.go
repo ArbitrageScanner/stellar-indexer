@@ -175,6 +175,7 @@ func runDirect(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	errc := make(chan error, 2)
 	stopAPI := serveAPI(ctx, cfg, db, log, errc)
 	defer stopAPI()
+	startLogos(ctx, cfg, db, log)
 	go prune(ctx, db, cfg, log)
 	go func() {
 		err := r.Run(ctx)
@@ -202,6 +203,7 @@ func apiOnly(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	errc := make(chan error, 1)
 	stop := serveAPI(ctx, cfg, db, log, errc)
 	defer stop()
+	startLogos(ctx, cfg, db, log)
 	stopMetrics := serveMetrics(cfg, log) // plain-http /health for container probes, even under mTLS
 	defer stopMetrics()
 	select {

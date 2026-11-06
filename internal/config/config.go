@@ -59,6 +59,7 @@ type Config struct {
 	UI           bool
 	UIDir        string
 	USDAsset     string
+	LogoFetch    bool // resolve issuer images from stellar.toml (outbound HTTPS from the API process)
 	LabelsToken  string
 	LabelsOpen   bool
 	APIKeys      []string
@@ -115,6 +116,7 @@ func Load() (Config, error) {
 		UI:                  envBool("UI_ENABLED", true),
 		UIDir:               os.Getenv("UI_DIR"),
 		USDAsset:            os.Getenv("USD_ASSET"),
+		LogoFetch:           envBool("LOGO_FETCH", true),
 		LabelsToken:         os.Getenv("LABELS_TOKEN"),
 		LabelsOpen:          envBool("LABELS_OPEN", false),
 		APIKeys:             envList("API_KEYS", nil),
@@ -219,7 +221,7 @@ func (c Config) Redacted() map[string]any {
 		"network": c.Network, "rpc": c.RPCURL, "db": db, "kafka": c.KafkaBrokers, "topic": c.KafkaTopic,
 		"verify": c.VerifyProtocols, "partition_ledgers": c.PartitionLedgers, "api_keys": len(c.APIKeys),
 		"labels_token": c.LabelsToken != "", "labels_open": c.LabelsOpen, "rate_rps": c.RateRPS,
-		"tls": c.TLSCertFile != "", "mtls": c.TLSClientCAFile != "",
+		"tls": c.TLSCertFile != "", "mtls": c.TLSClientCAFile != "", "logo_fetch": c.LogoFetch,
 	}
 }
 
