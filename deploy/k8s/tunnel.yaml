@@ -1,0 +1,44 @@
+# Holds an outbound SSH session to the edge and exposes indexer-api:8080 as
+# tunnel:18080 inside the edge's compose network (remote forward). No inbound
+# port is opened anywhere on this cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tunnel }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }       # the edge accepts one listener on :18080
+  selector: { matchLabels: { app: tunnel } }
+  template:
+    metadata: { labels: { app: tunnel } }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: tunnel
+          image: stellar-tunnel
+          args: [client]
+          env:
+            - { name: TARGET, value: "indexer-api:8080" }
+            - name: EDGE_HOST
+              valueFrom: { secretKeyRef: { name: tunnel-client, key: EDGE_HOST } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { cpu: 500m, memory: 128Mi }
+          volumeMounts:
+            - { name: keys, mountPath: /etc/tunnel, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: keys
+          secret:
+            secretName: tunnel-client
+            defaultMode: 0440
+            items: [{ key: id_ed25519, path: id_ed25519 }, { key: known_hosts, path: known_hosts }]
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 1Mi }

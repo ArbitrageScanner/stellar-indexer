@@ -1,0 +1,28 @@
+# Private (indexer) side on k3s, namespace stellar-indexer.
+#   postgres, redpanda (StatefulSets) ← writer ← fetcher ← Stellar RPC
+#   indexer-api (internal: API key + mTLS) ← tunnel pod → SSH reverse forward → edge gateway
+# Nothing here is exposed by the cluster: no Ingress, NodePort or LoadBalancer
+# (the namespace quota forbids the latter two). See deploy/README.md.
+#
+# deploy.sh creates the secrets and sets the image tags; CI runs it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: stellar-indexer
+labels:
+  - pairs: { app.kubernetes.io/part-of: stellar-indexer }
+resources:
+  - networkpolicy.yaml
+  - postgres.yaml
+  - redpanda.yaml
+  - indexer.yaml
+  - tunnel.yaml
+configMapGenerator:
+  - name: indexer-config
+    envs: [indexer.env]
+images:
+  - name: stellar-indexer
+    newName: ghcr.io/arbitragescanner/stellar-indexer
+    newTag: latest
+  - name: stellar-tunnel
+    newName: ghcr.io/arbitragescanner/stellar-tunnel
+    newTag: latest

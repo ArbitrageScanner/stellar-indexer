@@ -1,6 +1,7 @@
 # Automatic HTTPS for the public hostname; everything goes to the gateway.
 {$DOMAIN} {
 	encode zstd gzip
+	redir / /ui/ 302
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		-Server

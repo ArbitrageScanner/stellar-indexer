@@ -19,7 +19,7 @@ services:
 
   gateway:
     build: { context: ../.., target: gateway }
-    image: stellar-gateway:latest
+    image: ${GATEWAY_IMAGE:-stellar-gateway:latest}
     environment:
       UPSTREAM_URL: ${UPSTREAM_URL:-http://10.77.0.2:8080}   # https://… with mTLS
       UPSTREAM_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY}

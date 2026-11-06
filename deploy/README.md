@@ -1,5 +1,9 @@
 # Split deployment: public edge + hidden indexer
 
+> **Production layout** (k3s private side + Docker edge, deployed by CI) is described in
+> ["Production: k3s + Docker edge"](#production-k3s--docker-edge) below. The sections before it
+> describe the generic two-Docker-host variant over WireGuard.
+
 ```
  Internet ──HTTPS──▶ EDGE server (small, public)               PRIVATE server (large, hidden)
                      ┌──────────────────────────┐   WireGuard   ┌─────────────────────────────────┐
@@ -112,3 +116,40 @@ Two Docker projects simulate the servers. The private project publishes no ports
 | Browser smoke test of every explorer page through the gateway | all page views ok |
 
 Unit tests (`internal/gateway`) cover the same behaviour, including real mTLS handshakes with generated certificates. WireGuard and nftables themselves were not exercised here, because the dev container has no kernel networking privileges. Their configs are standard and listed above.
+
+## Production: k3s + Docker edge
+
+```
+ Internet ─HTTPS─▶ edge 203.0.113.10 (Docker)                       k3s node 203.0.113.20, namespace stellar-indexer
+                   caddy ─▶ gateway ─mTLS─▶ tunnel:18080 ◀═ SSH -R ═ tunnel pod ─▶ indexer-api ─▶ postgres
+                                            (sshd :2222, only            (outbound only)   writer ◀ redpanda ◀ fetcher ◀ RPC
+                                             from 203.0.113.20)
+```
+
+The private side runs in its own namespace on a k3s node shared with other workloads, so the design avoids touching the host:
+- Nothing in the namespace is exposed: Services are ClusterIP only, the namespace quota forbids NodePort and LoadBalancer, and a NetworkPolicy admits only pods of the same namespace (checked: a pod in `default` cannot reach `indexer-api` or `postgres`).
+- The link to the edge is a pod (`deploy/k8s/tunnel.yaml`, image `stellar-tunnel`) that dials the edge's sshd container and remote-forwards `indexer-api:8080`. The forwarded port exists only on the edge's compose network. On top of it, the gateway still uses mTLS (the server name is `indexer-api`) and the internal API key.
+- On the edge, the sshd accepts one key, for remote forwards to `:18080` only (no shell, TTY or local forwards). Port 2222 is allowed only from the k3s node through the `DOCKER-USER` chain (`deploy/docker-host.sh`, `TUNNEL_ALLOW_FROM`), because ufw does not filter Docker-published ports.
+- The namespace runs under Pod Security `restricted`, so every container is non-root with all capabilities dropped. A `ResourceQuota` caps it at 16 CPU / 48 Gi requested, 32 CPU / 64 Gi limits and 800 Gi of storage.
+
+| Piece | Files |
+|---|---|
+| Namespace, quota, PSS, CI identity (once, by a cluster admin) | `k8s/bootstrap/namespace.yaml`, `k8s/bootstrap/make-kubeconfig.sh` |
+| Workloads (kustomize) | `k8s/*.yaml`, settings in `k8s/indexer.env` |
+| k3s deploy (secrets become hashed Secrets, so changes roll the pods) | `k8s/deploy.sh` |
+| Edge deploy over SSH (pulls images, keeps no registry credentials) | `edge/deploy.sh`, `edge/compose.tunnel.yml` |
+| Docker host preparation (once, as root) | `docker-host.sh` |
+| All secrets and keys, generated once | `secrets/gen-secrets.sh <edge-host> <out.env>` |
+
+The CI identity is the ServiceAccount `stellar-indexer/ci-deployer`, bound to the built-in `edit` ClusterRole by a RoleBinding. It can manage workloads, Services, Secrets, PVCs and NetworkPolicies in this namespace only. It cannot read other namespaces, nodes or cluster-scoped objects, and it cannot change RBAC or the quota (checked with `kubectl auth can-i`).
+
+### CI/CD
+`.github/workflows/ci.yml` runs lint, tests, the Docker build and the testnet e2e. On `main`, it then publishes `ghcr.io/<owner>/stellar-{indexer,gateway,tunnel}:<sha>` and, when the variable `DEPLOY_ENABLED=true` is set, calls `deploy.yml`. That workflow deploys k3s first (migrations run there), then the edge, then smoke-tests `https://<EDGE_DOMAIN>/ready` and `/ui/`. To roll back, run `deploy.yml` by hand with an older sha. The secrets and variables (GitHub environment `production`) are listed at the top of `deploy.yml`.
+
+All three indexer processes run the same tag. Old binaries refuse a database at a newer migration, so never pin them to different shas.
+
+### First-time setup
+1. k3s: `kubectl apply -f deploy/k8s/bootstrap/namespace.yaml`, then `make-kubeconfig.sh` → secret `KUBECONFIG_B64`.
+2. Edge: `TUNNEL_ALLOW_FROM=203.0.113.20 deploy/docker-host.sh`, then add the CI key to `deploy`.
+3. `deploy/secrets/gen-secrets.sh 203.0.113.10 out.env` → GitHub secrets and variables. Keep `out.env.ca.key` offline.
+4. Point DNS at the edge and set `EDGE_DOMAIN`. Caddy accepts a list, e.g. `explorer.example.org, 203-0-113-10.sslip.io`.

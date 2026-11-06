@@ -1,0 +1,174 @@
+# fetcher (RPC → topic), writer (topic → Postgres), indexer-api (internal read API).
+# Each process applies pending migrations under an advisory lock, and old
+# binaries refuse a newer schema, so all three must run the same image tag
+# (deploy.sh sets one tag for all). fetcher and writer are single-writer by
+# design: Recreate, never two at once.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: fetcher }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: fetcher } }
+  template:
+    metadata: { labels: { app: fetcher } }
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: fetcher
+          image: stellar-indexer
+          args: [fetch]
+          envFrom:
+            - configMapRef: { name: indexer-config }
+            - secretRef: { name: indexer-secrets }
+          env:
+            - name: DATABASE_URL
+              value: postgres://indexer:$(POSTGRES_PASSWORD)@postgres:5432/indexer?sslmode=disable
+          ports:
+            - { name: metrics, containerPort: 9100 }
+          readinessProbe:
+            httpGet: { path: /health, port: 9100 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 9100 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: "500m", memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: writer }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: writer } }
+  template:
+    metadata: { labels: { app: writer } }
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: writer
+          image: stellar-indexer
+          args: [write]
+          envFrom:
+            - configMapRef: { name: indexer-config }
+            - secretRef: { name: indexer-secrets }
+          env:
+            - name: DATABASE_URL
+              value: postgres://indexer:$(POSTGRES_PASSWORD)@postgres:5432/indexer?sslmode=disable
+          ports:
+            - { name: metrics, containerPort: 9100 }
+          readinessProbe:
+            httpGet: { path: /health, port: 9100 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 9100 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: "2", memory: 2Gi }
+            limits: { cpu: "6", memory: 8Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: indexer-api }
+spec:
+  replicas: 1
+  strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
+  selector: { matchLabels: { app: indexer-api } }
+  template:
+    metadata: { labels: { app: indexer-api } }
+    spec:
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: indexer-api
+          image: stellar-indexer
+          args: [api]
+          envFrom:
+            - configMapRef: { name: indexer-config }
+            - secretRef: { name: indexer-secrets }
+          env:
+            - name: DATABASE_URL
+              value: postgres://indexer:$(POSTGRES_PASSWORD)@postgres:5432/indexer?sslmode=disable
+            - { name: UI_ENABLED, value: "false" }      # the UI is served by the edge gateway
+            - { name: TRUST_PROXY, value: "true" }      # X-Forwarded-For comes from the gateway
+            - { name: RATE_LIMIT_RPS, value: "0" }      # rate limiting happens at the edge
+            - { name: CACHE_TTL, value: 10s }
+            - name: API_KEYS
+              valueFrom: { secretKeyRef: { name: indexer-secrets, key: INTERNAL_API_KEY } }
+            - { name: TLS_CERT_FILE, value: /certs/api.crt }
+            - { name: TLS_KEY_FILE, value: /certs/api.key }
+            - { name: TLS_CLIENT_CA_FILE, value: /certs/ca.crt }
+          ports:
+            - { name: metrics, containerPort: 9100 }
+            - { name: https, containerPort: 8080 }
+          readinessProbe:
+            httpGet: { path: /health, port: 9100 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 9100 }
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: "1", memory: 1Gi }
+            limits: { cpu: "4", memory: 4Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: certs, mountPath: /certs, readOnly: true }
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+        - name: certs
+          secret: { secretName: indexer-api-tls, defaultMode: 0440 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: indexer-api }
+spec:
+  selector: { app: indexer-api }
+  ports: [{ name: https, port: 8080, targetPort: https }]
