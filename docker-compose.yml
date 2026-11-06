@@ -9,7 +9,7 @@
 # Indexing starts at the current ledger (START_LEDGER=latest) and survives restarts of any service.
 
 x-indexer: &indexer
-  build: .
+  build: { context: ., target: indexer }
   image: stellar-indexer:dev
   restart: unless-stopped
   environment: &env

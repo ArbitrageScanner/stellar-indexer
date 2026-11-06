@@ -78,7 +78,9 @@ var (
 		Buckets: prometheus.ExponentialBuckets(0.001, 2.5, 12),
 	}, []string{"route"})
 	RateLimited = counter("http_rate_limited_total", "Requests rejected by the rate limiter.")
-	CacheHits   = counterVec("http_cache_total", "Response cache lookups.", "result")
+	// Gateway.
+	UpstreamErrors = counterVec("gateway_upstream_errors_total", "Failed requests from the public gateway to the internal API.", "kind")
+	CacheHits      = counterVec("http_cache_total", "Response cache lookups.", "result")
 )
 
 func init() {

@@ -1,4 +1,4 @@
-import { get, qs } from '../api.js';
+import { get, qs, blocked } from '../api.js';
 import { html, setHTML, load, card, tile, pageHead, seg, bindSeg, hbars, stackbar, table, num, compact, pct, amount, ago, duration,
   bytes, ledgerLink, pairLink, venue, price, raw, state, snake, VENUE_LABEL, venueColor, empty } from '../ui.js';
 import { columns, line, sparkline } from '../charts.js';
@@ -126,7 +126,8 @@ export default async function overview(view, _p, query, ctx) {
     (d) => d.alerts.length ? html`${d.alerts.map(alertRow)}` : empty('Nothing notable in this window'), { quiet });
 
   const all = () => { loadWindow().catch((e) => setHTML(view.querySelector('#c-tx'), html`${e.message}`)); opmix(); protos(); pairs(); alerts(false); };
-  all(); feed(false); tables();
+  all(); feed(false);
+  if (blocked('/stats/tables')) view.querySelector('#tables').closest('.card').remove(); else tables();
   bindSeg(view, 'window', (v) => { win = v; ctx.setQuery({ window: v }); all(); });
   const onStatus = () => drawTiles();
   window.addEventListener('status', onStatus);

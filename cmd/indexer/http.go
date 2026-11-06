@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -42,9 +45,21 @@ func serveAPI(ctx context.Context, cfg config.Config, db *store.Store, log *slog
 		IdleTimeout:       2 * time.Minute,
 		MaxHeaderBytes:    64 << 10,
 	}
+	tlsCfg, err := serverTLS(cfg)
+	if err != nil {
+		errc <- err
+		return func() {}
+	}
+	srv.TLSConfig = tlsCfg
 	go func() {
-		log.Info("http listening", "addr", cfg.HTTPAddr)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Info("http listening", "addr", cfg.HTTPAddr, "tls", tlsCfg != nil, "mtls", cfg.TLSClientCAFile != "")
+		var err error
+		if tlsCfg != nil {
+			err = srv.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
@@ -53,6 +68,28 @@ func serveAPI(ctx context.Context, cfg config.Config, db *store.Store, log *slog
 		defer cancel()
 		_ = srv.Shutdown(sctx)
 	}
+}
+
+// serverTLS returns the API listener's TLS config: TLS 1.3, and with a
+// client CA, mandatory client certificates (mTLS from the public gateway).
+func serverTLS(cfg config.Config) (*tls.Config, error) {
+	if cfg.TLSCertFile == "" {
+		return nil, nil
+	}
+	t := &tls.Config{MinVersion: tls.VersionTLS13}
+	if cfg.TLSClientCAFile != "" {
+		pem, err := os.ReadFile(cfg.TLSClientCAFile)
+		if err != nil {
+			return nil, err
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("%s: no certificates found", cfg.TLSClientCAFile)
+		}
+		t.ClientCAs = pool
+		t.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return t, nil
 }
 
 // serveMetrics exposes /metrics and /health for the fetch and write processes.

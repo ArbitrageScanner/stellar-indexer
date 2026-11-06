@@ -1,4 +1,4 @@
-import { get, raw as rawFetch, apiURL } from '../api.js';
+import { get, raw as rawFetch, apiURL, blocked } from '../api.js';
 import { html, setHTML, pageHead, jsonHTML, bytes, num, icon, raw, tabs, bindTabs, toast, errorBox } from '../ui.js';
 
 // Endpoint catalog. {x} placeholders are filled from live samples.
@@ -91,7 +91,7 @@ export default async function playground(view, _p, query, ctx) {
 
   const s = await samples();
   if (!ctx.alive()) return;
-  const items = CATALOG.flatMap(([g, list]) => list.map(([p, d]) => ({ g, path: fill(p, s), tpl: p, d })));
+  const items = CATALOG.flatMap(([g, list]) => list.filter(([p]) => !blocked(p)).map(([p, d]) => ({ g, path: fill(p, s), tpl: p, d })));
   const listEl = view.querySelector('#list');
   setHTML(listEl, html`${CATALOG.map(([g]) => html`<div class="grp">${g}</div>${items.filter((i) => i.g === g).map((i) => html`<a role="button" tabindex="0" data-path="${i.path}"><span class="m">GET</span><span class="p">${i.tpl.split('?')[0]}</span>${i.tpl.includes('?') ? html`<span class="muted">?${i.tpl.split('?')[1]}</span>` : ''}</a>`)}`)}`);
 

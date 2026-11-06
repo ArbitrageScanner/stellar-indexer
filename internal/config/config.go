@@ -70,6 +70,11 @@ type Config struct {
 	ReadyMaxLag  time.Duration
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	// TLS for the API listener; with a client CA, clients (the public
+	// gateway) must present a certificate signed by it (mTLS).
+	TLSCertFile     string
+	TLSKeyFile      string
+	TLSClientCAFile string
 
 	LogLevel     string
 	LogFormat    string // text | json
@@ -121,6 +126,9 @@ func Load() (Config, error) {
 		ReadyMaxLag:         envDuration("READY_MAX_LAG", 2*time.Minute),
 		ReadTimeout:         envDuration("HTTP_READ_TIMEOUT", 15*time.Second),
 		WriteTimeout:        envDuration("HTTP_WRITE_TIMEOUT", 60*time.Second),
+		TLSCertFile:         os.Getenv("TLS_CERT_FILE"),
+		TLSKeyFile:          os.Getenv("TLS_KEY_FILE"),
+		TLSClientCAFile:     os.Getenv("TLS_CLIENT_CA_FILE"),
 		LogLevel:            env("LOG_LEVEL", "info"),
 		LogFormat:           env("LOG_FORMAT", "text"),
 		RPCTimeout:          envDuration("RPC_TIMEOUT", 60*time.Second),
@@ -187,6 +195,9 @@ func Load() (Config, error) {
 	if c.RateRPS < 0 || c.RateBurst < 0 {
 		errs = append(errs, errors.New("RATE_LIMIT_RPS and RATE_LIMIT_BURST must be >= 0"))
 	}
+	if (c.TLSCertFile == "") != (c.TLSKeyFile == "") || (c.TLSClientCAFile != "" && c.TLSCertFile == "") {
+		errs = append(errs, errors.New("TLS_CERT_FILE and TLS_KEY_FILE go together; TLS_CLIENT_CA_FILE needs them"))
+	}
 	if c.LogFormat != "text" && c.LogFormat != "json" {
 		errs = append(errs, fmt.Errorf("LOG_FORMAT must be text or json, got %q", c.LogFormat))
 	}
@@ -208,6 +219,7 @@ func (c Config) Redacted() map[string]any {
 		"network": c.Network, "rpc": c.RPCURL, "db": db, "kafka": c.KafkaBrokers, "topic": c.KafkaTopic,
 		"verify": c.VerifyProtocols, "partition_ledgers": c.PartitionLedgers, "api_keys": len(c.APIKeys),
 		"labels_token": c.LabelsToken != "", "labels_open": c.LabelsOpen, "rate_rps": c.RateRPS,
+		"tls": c.TLSCertFile != "", "mtls": c.TLSClientCAFile != "",
 	}
 }
 

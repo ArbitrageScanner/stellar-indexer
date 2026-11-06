@@ -2,12 +2,23 @@
 
 const KEY = 'apiBase';
 
+// apiBase: the per-browser override (settings), else config.js, else same origin.
 export function apiBase() {
-  try { return (localStorage.getItem(KEY) || '').replace(/\/+$/, ''); } catch { return ''; }
+  let v = '';
+  try { v = localStorage.getItem(KEY) || ''; } catch {}
+  if (!v) v = (globalThis.STELLAR_INDEXER && globalThis.STELLAR_INDEXER.apiBase) || '';
+  return String(v).replace(/\/+$/, '');
 }
 
 export function setApiBase(v) {
   try { v ? localStorage.setItem(KEY, v.replace(/\/+$/, '')) : localStorage.removeItem(KEY); } catch {}
+}
+
+// blocked reports whether the serving edge hides an API path (config.js).
+export function blocked(path) {
+  const list = (globalThis.STELLAR_INDEXER && globalThis.STELLAR_INDEXER.blocked) || [];
+  const p = path.split('?')[0];
+  return list.some((b) => p === b || p.startsWith(b.replace(/\/$/, '') + '/'));
 }
 
 // Absolute URL of an API path, for display (curl) and fetching.

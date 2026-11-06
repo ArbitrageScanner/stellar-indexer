@@ -29,6 +29,8 @@ RPC ─▶ fetcher ─▶ Redpanda/Kafka topic (raw LedgerCloseMeta, 1 partition
 
 Design decisions, failure behaviour and package layout are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The API design (layers, middleware, security) is in [docs/API.md](docs/API.md), and its contract in [`internal/api/openapi.yaml`](internal/api/openapi.yaml) (served at `/openapi.yaml`).
 
+**Split deployment** (hidden indexer server, public edge): the `gateway` image serves the UI and proxies the API over a WireGuard/SSH tunnel that the indexer server initiates. The indexer server needs no inbound ports, and the edge holds no database credentials. See [deploy/README.md](deploy/README.md).
+
 Indexing starts at the current ledger (`START_LEDGER=latest`). History is deliberately out of scope; restarts of any component resume where they stopped.
 
 ## Quick start
@@ -63,6 +65,7 @@ KAFKA_BROKERS=localhost:19092 ./bin/indexer write &
 | `indexer migrate` | Apply database migrations and exit |
 | `indexer inspect [seq]` | Decode one ledger from RPC and print a summary (no DB) |
 | `indexer contract-code C…` | Show contract executables and which protocol allowlists they match |
+| `gateway` (separate binary/image) | Public edge: UI + API proxy to an internal `indexer api` (deploy/README.md) |
 
 ## Explorer UI
 

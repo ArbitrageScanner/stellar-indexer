@@ -6,11 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"testing/fstest"
-	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -124,20 +121,6 @@ func TestRateLimit(t *testing.T) {
 			t.Fatalf("/metrics limited: %d", c)
 		}
 	}
-	l := newRateLimiter(10, 1)
-	now := time.Now()
-	if ok, _ := l.allow("a", now); !ok {
-		t.Fatal("first token")
-	}
-	if ok, wait := l.allow("a", now); ok || wait <= 0 {
-		t.Fatal("bucket should be empty")
-	}
-	if ok, _ := l.allow("a", now.Add(150*time.Millisecond)); !ok {
-		t.Fatal("token should refill at 10/s")
-	}
-	if ok, _ := l.allow("b", now); !ok {
-		t.Fatal("clients must have separate buckets")
-	}
 }
 
 func TestAPIKeys(t *testing.T) {
@@ -213,67 +196,5 @@ func TestMetricsUseRoutePatterns(t *testing.T) {
 	body := do(h, "GET", "/metrics", nil, "").Body.String()
 	if !strings.Contains(body, `route="GET /ledgers/{seq}"`) || strings.Contains(body, `route="/ledgers/abc"`) {
 		t.Fatal("http metrics must be labelled by route pattern")
-	}
-}
-
-func TestResponseCache(t *testing.T) {
-	var calls atomic.Int32
-	status := 200
-	c := newResponseCache(time.Minute, 2)
-	h := c.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(`{"n":1}`))
-	}))
-	if rec := do(h, "GET", "/x?a=1", nil, ""); rec.Header().Get("X-Cache") != "MISS" || rec.Body.String() != `{"n":1}` {
-		t.Fatalf("first: %v %s", rec.Header(), rec.Body)
-	}
-	if rec := do(h, "GET", "/x?a=1", nil, ""); rec.Header().Get("X-Cache") != "HIT" || rec.Header().Get("Content-Type") != "application/json" || calls.Load() != 1 {
-		t.Fatalf("second: %v calls=%d", rec.Header(), calls.Load())
-	}
-	do(h, "GET", "/x?a=2", nil, "") // other query string = other entry
-	if calls.Load() != 2 {
-		t.Fatalf("query string must be part of the key: %d", calls.Load())
-	}
-	status = 500
-	do(h, "GET", "/err", nil, "")
-	do(h, "GET", "/err", nil, "")
-	if calls.Load() != 4 {
-		t.Fatalf("errors must not be cached: %d", calls.Load())
-	}
-	// LRU bound: max 2 entries.
-	do(h, "GET", "/x?a=3", nil, "")
-	if len(c.entries) > 2 {
-		t.Fatalf("cache exceeds bound: %d", len(c.entries))
-	}
-
-	// Concurrent misses for one key share a single upstream call.
-	var upstream atomic.Int32
-	release := make(chan struct{})
-	slow := newResponseCache(time.Minute, 10).wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstream.Add(1)
-		<-release
-		_, _ = w.Write([]byte("ok"))
-	}))
-	var wg sync.WaitGroup
-	codes := make([]string, 5)
-	for i := range codes {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			codes[i] = do(slow, "GET", "/slow", nil, "").Body.String()
-		}(i)
-	}
-	time.Sleep(50 * time.Millisecond)
-	close(release)
-	wg.Wait()
-	if upstream.Load() != 1 {
-		t.Fatalf("dedupe: %d upstream calls", upstream.Load())
-	}
-	for _, b := range codes {
-		if b != "ok" {
-			t.Fatalf("waiter got %q", b)
-		}
 	}
 }

@@ -1,4 +1,4 @@
-package api
+package httpx
 
 import (
 	"bytes"
@@ -10,10 +10,9 @@ import (
 	"github.com/ArbitrageScanner/stellar-indexer/internal/metrics"
 )
 
-// responseCache keeps successful GET responses of heavy analytics endpoints
-// for a short TTL. Concurrent misses for the same URL share one upstream
+// Cache keeps successful GET responses for a short TTL. Concurrent misses for the same URL share one upstream
 // computation; the size is bounded with LRU eviction.
-type responseCache struct {
+type Cache struct {
 	ttl time.Duration
 	max int
 
@@ -35,11 +34,12 @@ type flight struct {
 	resp *cached // nil when the leader's response was not cacheable
 }
 
-func newResponseCache(ttl time.Duration, max int) *responseCache {
-	return &responseCache{ttl: ttl, max: max, entries: map[string]*list.Element{}, lru: list.New(), inflight: map[string]*flight{}}
+// NewCache holds up to max responses for ttl each.
+func NewCache(ttl time.Duration, max int) *Cache {
+	return &Cache{ttl: ttl, max: max, entries: map[string]*list.Element{}, lru: list.New(), inflight: map[string]*flight{}}
 }
 
-func (c *responseCache) get(key string, now time.Time) *cached {
+func (c *Cache) get(key string, now time.Time) *cached {
 	if e, ok := c.entries[key]; ok {
 		v := e.Value.(*cached)
 		if now.Before(v.expires) {
@@ -52,7 +52,7 @@ func (c *responseCache) get(key string, now time.Time) *cached {
 	return nil
 }
 
-func (c *responseCache) put(v *cached) {
+func (c *Cache) put(v *cached) {
 	if e, ok := c.entries[v.key]; ok {
 		c.lru.Remove(e)
 	}
@@ -85,7 +85,9 @@ func (b *bufferWriter) WriteHeader(code int) {
 	}
 }
 
-func (c *responseCache) wrap(next http.Handler) http.Handler {
+// Wrap caches next's 200 responses by request URI (X-Cache: HIT|MISS);
+// concurrent identical misses share one computation.
+func (c *Cache) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.URL.RequestURI()
 		c.mu.Lock()

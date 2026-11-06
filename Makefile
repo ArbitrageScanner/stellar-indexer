@@ -1,9 +1,10 @@
-.PHONY: build test itest race lint fmt run-direct up up-direct down logs invariants e2e
+.PHONY: certs build test itest race lint fmt run-direct up up-direct down logs invariants e2e
 GO ?= go
 DB ?= postgres://indexer:indexer@localhost:5432/indexer?sslmode=disable
 
 build:
 	CGO_ENABLED=0 $(GO) build -trimpath -o bin/indexer ./cmd/indexer
+	CGO_ENABLED=0 $(GO) build -trimpath -o bin/gateway ./cmd/gateway
 # Unit + fixture tests (no services needed).
 test:
 	$(GO) test -count=1 ./...
@@ -33,3 +34,6 @@ invariants:
 # Browser smoke test of every UI page: make e2e URL=http://localhost:8080
 e2e:
 	node web/e2e/smoke.mjs $(or $(URL),http://localhost:8080)
+# mTLS certificates for the split deployment (deploy/README.md).
+certs:
+	deploy/certs/gen-certs.sh $(HOSTS)

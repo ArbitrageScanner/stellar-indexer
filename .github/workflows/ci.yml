@@ -59,10 +59,18 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          target: indexer
           push: false
           tags: stellar-indexer:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: gateway
+          push: false
+          tags: stellar-gateway:ci
+          cache-from: type=gha
 
   # Full stack (Postgres + Redpanda + fetcher + writer + API) against testnet,
   # then the browser smoke test over every explorer page.

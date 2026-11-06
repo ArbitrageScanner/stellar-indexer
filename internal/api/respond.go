@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ArbitrageScanner/stellar-indexer/internal/analytics"
+	"github.com/ArbitrageScanner/stellar-indexer/internal/httpx"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/query"
 )
 
@@ -33,7 +34,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg, "request_id": requestIDOf(r.Context())})
+	httpx.WriteError(w, r, code, msg)
 }
 
 // reply encodes v, or maps err to a status: validation → 400, missing →

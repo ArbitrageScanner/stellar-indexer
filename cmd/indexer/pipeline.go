@@ -90,7 +90,7 @@ func newProcessor(ctx context.Context, cfg config.Config, db *store.Store, log *
 
 func heartbeat(db *store.Store, name, role string, log *slog.Logger) func(context.Context, uint32, uint32) {
 	return func(ctx context.Context, ledger, tip uint32) {
-		if err := db.Heartbeat(ctx, name, role, ledger, tip, map[string]any{"pid": os.Getpid()}); err != nil && ctx.Err() == nil {
+		if err := db.Heartbeat(ctx, name, role, ledger, tip, map[string]any{}); err != nil && ctx.Err() == nil {
 			log.Warn("heartbeat failed", "err", err)
 		}
 	}
@@ -202,6 +202,8 @@ func apiOnly(ctx context.Context, cfg config.Config, log *slog.Logger) error {
 	errc := make(chan error, 1)
 	stop := serveAPI(ctx, cfg, db, log, errc)
 	defer stop()
+	stopMetrics := serveMetrics(cfg, log) // plain-http /health for container probes, even under mTLS
+	defer stopMetrics()
 	select {
 	case <-ctx.Done():
 		return nil

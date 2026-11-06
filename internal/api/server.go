@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ArbitrageScanner/stellar-indexer/internal/httpx"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/metrics"
 	"github.com/ArbitrageScanner/stellar-indexer/internal/query"
 )
@@ -42,8 +43,8 @@ type Server struct {
 	repo    *query.Repo
 	log     *slog.Logger
 	cfg     Config
-	cache   *responseCache
-	limiter *rateLimiter
+	cache   *httpx.Cache
+	limiter *httpx.RateLimiter
 }
 
 // New builds a server over a Postgres pool.
@@ -53,14 +54,14 @@ func New(pool *pgxpool.Pool, log *slog.Logger, cfg Config) *Server {
 	}
 	s := &Server{repo: query.New(pool), log: log, cfg: cfg}
 	if cfg.CacheTTL > 0 {
-		s.cache = newResponseCache(cfg.CacheTTL, 512)
+		s.cache = httpx.NewCache(cfg.CacheTTL, 512)
 	}
 	if cfg.RateRPS > 0 {
 		burst := cfg.RateBurst
 		if burst <= 0 {
 			burst = int(2*cfg.RateRPS) + 1
 		}
-		s.limiter = newRateLimiter(cfg.RateRPS, burst)
+		s.limiter = httpx.NewRateLimiter(cfg.RateRPS, burst)
 	}
 	return s
 }
@@ -137,20 +138,20 @@ func (s *Server) Handler() http.Handler {
 	for _, rt := range s.routes() {
 		var h http.Handler = rt.handler
 		if rt.cached && s.cache != nil {
-			h = s.cache.wrap(h)
+			h = s.cache.Wrap(h)
 		}
 		mux.Handle(rt.method+" "+rt.pattern, withRoute(rt.method+" "+rt.pattern, h))
 	}
 	if s.cfg.UI != nil {
-		mux.Handle("GET /ui/", withRoute("GET /ui/", uiHandler(s.cfg.UI)))
+		mux.Handle("GET /ui/", withRoute("GET /ui/", httpx.UIHandler(s.cfg.UI)))
 		mux.Handle("GET /ui", withRoute("GET /ui", http.RedirectHandler("/ui/", http.StatusMovedPermanently)))
 	}
 	var h http.Handler = mux
-	h = s.authenticate(h)
-	h = s.rateLimit(h)
-	h = s.cors(h)
-	h = securityHeaders(h)
+	h = httpx.RequireKey(httpx.NewKeys(s.cfg.APIKeys), exempt)(h)
+	h = httpx.RateLimit(s.limiter, s.clientIP, exempt)(h)
+	h = httpx.CORS(s.cfg.CORSOrigins)(h)
+	h = httpx.SecurityHeaders(h)
 	h = s.recoverPanics(h)
 	h = s.observe(h)
-	return requestID(h)
+	return httpx.RequestID(h)
 }
