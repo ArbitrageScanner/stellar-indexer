@@ -1,0 +1,115 @@
+name: deploy
+
+# Called by ci.yml after the images for a main commit are published, or run by
+# hand to redeploy / roll back to any published commit sha.
+#
+# Environment "production":
+#   secrets:   KUBECONFIG_B64, POSTGRES_PASSWORD, INTERNAL_API_KEY, LABELS_TOKEN,
+#              MTLS_CA_CRT_B64, MTLS_API_CRT_B64, MTLS_API_KEY_B64,
+#              MTLS_GATEWAY_CRT_B64, MTLS_GATEWAY_KEY_B64,
+#              TUNNEL_CLIENT_KEY_B64, TUNNEL_HOST_KEY_B64, DEPLOY_SSH_KEY_B64,
+#              optional: STELLAR_RPC_URL, GHCR_PULL_TOKEN (read:packages, for private packages)
+#   variables: EDGE_HOST, EDGE_DOMAIN (Caddy site list, first entry is smoke-tested),
+#              EDGE_SSH_KNOWN_HOSTS, TUNNEL_CLIENT_PUB, TUNNEL_KNOWN_HOSTS,
+#              optional: EDGE_SSH_USER (deploy), GHCR_PULL_USER, PUBLIC_API_KEYS, CORS_ORIGINS
+# See deploy/README.md ("CI/CD").
+on:
+  workflow_call:
+    inputs:
+      image_tag: { type: string, required: true }
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: commit sha of a published image set
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  indexer:
+    name: indexer (k3s)
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.image_tag }}" }
+      - uses: azure/setup-kubectl@v4
+        with: { version: v1.36.3 }
+      - name: kubeconfig (namespace-scoped token)
+        run: |
+          install -d -m 700 ~/.kube
+          printf '%s' "${{ secrets.KUBECONFIG_B64 }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl auth can-i create deployments
+      - name: deploy
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          EDGE_HOST: ${{ vars.EDGE_HOST }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          LABELS_TOKEN: ${{ secrets.LABELS_TOKEN }}
+          STELLAR_RPC_URL: ${{ secrets.STELLAR_RPC_URL }}
+          MTLS_CA_CRT_B64: ${{ secrets.MTLS_CA_CRT_B64 }}
+          MTLS_API_CRT_B64: ${{ secrets.MTLS_API_CRT_B64 }}
+          MTLS_API_KEY_B64: ${{ secrets.MTLS_API_KEY_B64 }}
+          TUNNEL_CLIENT_KEY_B64: ${{ secrets.TUNNEL_CLIENT_KEY_B64 }}
+          TUNNEL_KNOWN_HOSTS: ${{ vars.TUNNEL_KNOWN_HOSTS }}
+          # A read:packages PAT keeps later pulls (pod restarts) working; the
+          # job token works only while this job runs.
+          GHCR_PULL_USER: ${{ vars.GHCR_PULL_USER || github.actor }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN || github.token }}
+        run: |
+          IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" deploy/k8s/deploy.sh
+
+  edge:
+    name: edge (docker, ${{ vars.EDGE_HOST }})
+    needs: [indexer]
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ inputs.image_tag }}" }
+      - name: ssh
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s' "${{ secrets.DEPLOY_SSH_KEY_B64 }}" | base64 -d > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          printf '%s\n' "${{ vars.EDGE_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: deploy
+        env:
+          EDGE_SSH: ${{ vars.EDGE_SSH_USER || 'deploy' }}@${{ vars.EDGE_HOST }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          DOMAIN: ${{ vars.EDGE_DOMAIN }}
+          INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+          MTLS_CA_CRT_B64: ${{ secrets.MTLS_CA_CRT_B64 }}
+          MTLS_GATEWAY_CRT_B64: ${{ secrets.MTLS_GATEWAY_CRT_B64 }}
+          MTLS_GATEWAY_KEY_B64: ${{ secrets.MTLS_GATEWAY_KEY_B64 }}
+          TUNNEL_HOST_KEY_B64: ${{ secrets.TUNNEL_HOST_KEY_B64 }}
+          TUNNEL_CLIENT_PUB: ${{ vars.TUNNEL_CLIENT_PUB }}
+          PUBLIC_API_KEYS: ${{ vars.PUBLIC_API_KEYS }}
+          CORS_ORIGINS: ${{ vars.CORS_ORIGINS || '*' }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          export SSH_OPTS="-i $HOME/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+          IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" deploy/edge/deploy.sh
+      - name: smoke (public URL → tunnel → indexer)
+        env:
+          DOMAIN: ${{ vars.EDGE_DOMAIN }}
+        run: |
+          host=$(printf '%s' "${DOMAIN%%,*}" | tr -d ' ')
+          for i in $(seq 1 30); do
+            if curl -fsS "https://$host/ready"; then
+              curl -fsS -o /dev/null "https://$host/ui/" && exit 0
+            fi
+            sleep 6
+          done
+          exit 1
