@@ -1,0 +1,11 @@
+# Automatic HTTPS for the public hostname; everything goes to the gateway.
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	reverse_proxy gateway:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}

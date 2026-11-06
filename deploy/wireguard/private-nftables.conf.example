@@ -1,0 +1,16 @@
+# /etc/nftables.conf on the PRIVATE server: drop all inbound traffic except
+# the edge reaching the internal API (and SSH) over the tunnel. Outbound
+# (RPC over HTTPS, WireGuard to the edge, package mirrors) stays allowed.
+# Docker inserts its own rules for published ports: the API is published
+# only on 10.77.0.2, so it is reachable through wg0 alone.
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state established,related accept
+    iif lo accept
+    iifname "wg0" ip saddr 10.77.0.1 tcp dport { 22, 8080 } accept
+    icmp type echo-request limit rate 5/second accept
+  }
+  chain forward { type filter hook forward priority 0; policy accept; }
+  chain output  { type filter hook output priority 0; policy accept; }
+}

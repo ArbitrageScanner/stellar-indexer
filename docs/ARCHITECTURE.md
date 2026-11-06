@@ -33,6 +33,8 @@ small deployments and development (`docker compose --profile direct`).
 | `internal/store` | Migrations, partitions, idempotent batch writes, retention |
 | `internal/query`, `internal/analytics`, `internal/api` | Read side: SQL repository, domain logic, HTTP transport (see `docs/API.md`) |
 | `internal/metrics` | The Prometheus registry and every exported metric |
+| `internal/httpx` | HTTP building blocks shared by the API and the gateway (request IDs, CORS, security headers, keys, rate limit, cache) |
+| `internal/gateway`, `cmd/gateway` | Public edge for split deployments (ADR-10) |
 | `cmd/indexer` | Wiring and process lifecycle only |
 
 ## Decisions
@@ -108,6 +110,20 @@ query, so a paused or lagging indexer still answers consistently.
 in its own transaction, under an advisory lock (safe with concurrent
 api/fetch/write starts), and verified by checksum. A database newer than the
 binary, or created by the pre-migration prototype, is refused.
+
+### ADR-10: public edge separated from the indexer
+For deployments where the indexer server must stay off the internet, the
+read side splits in two (`deploy/`). A stateless `gateway` (its own binary
+and image, with no database, Kafka or Stellar code) serves the UI and proxies
+the API. The internal `indexer api` runs on the private server and is
+reachable only through a tunnel that the private server initiates
+(WireGuard, or a reverse SSH tunnel). It is protected by mTLS and an internal
+key. The gateway owns the public concerns (TLS via Caddy, per-client rate
+limits, CORS, security headers, an edge cache, blocking internal endpoints),
+replaces client-supplied forwarding headers, and never exposes upstream
+error details. Shared HTTP building blocks live in `internal/httpx`, so both
+sides apply the same rules. A compromised edge yields no database access and
+no data beyond the public read API.
 
 ## Failure behaviour
 

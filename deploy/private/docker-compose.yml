@@ -1,0 +1,90 @@
+# Private (indexer) server: ingestion, database, queue and the internal API.
+# Nothing here is reachable from the internet:
+#   - postgres and redpanda publish no ports at all;
+#   - the internal API binds only to the tunnel address (PRIVATE_BIND, the
+#     WireGuard IP), requires INTERNAL_API_KEY, and with certs requires the
+#     gateway's client certificate (mTLS).
+# Docker's published ports bypass ufw/firewalld rules, which is why the bind
+# address must be the tunnel IP and never 0.0.0.0. See deploy/README.md.
+#
+#   cp .env.example .env && docker compose up -d --build --wait
+
+x-indexer: &indexer
+  build: { context: ../.., target: indexer }
+  image: stellar-indexer:latest
+  restart: unless-stopped
+  environment: &env
+    DATABASE_URL: postgres://indexer:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/indexer?sslmode=disable
+    STELLAR_NETWORK: ${STELLAR_NETWORK:-pubnet}
+    STELLAR_RPC_URL: ${STELLAR_RPC_URL:-}
+    START_LEDGER: latest
+    KAFKA_BROKERS: redpanda:9092
+    KAFKA_RETENTION: ${KAFKA_RETENTION:-24h}
+    KAFKA_RETENTION_BYTES: ${KAFKA_RETENTION_BYTES:-10737418240}
+    INDEX_FAILED_TXS: ${INDEX_FAILED_TXS:-false}
+    RETAIN_RAW_LEDGERS: ${RETAIN_RAW_LEDGERS:-0}
+    RETAIN_MARKET_LEDGERS: ${RETAIN_MARKET_LEDGERS:-0}
+    RETAIN_CANDLE_LEDGERS: ${RETAIN_CANDLE_LEDGERS:-0}
+    LOG_FORMAT: json
+  logging: &logging
+    driver: json-file
+    options: { max-size: "50m", max-file: "5" }
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: indexer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: indexer
+    command: ["postgres", "-c", "shared_buffers=${PG_SHARED_BUFFERS:-4GB}", "-c", "max_wal_size=8GB", "-c", "effective_cache_size=${PG_EFFECTIVE_CACHE:-12GB}"]
+    shm_size: 1g
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U indexer"], interval: 3s, retries: 20 }
+    restart: unless-stopped
+    logging: *logging
+
+  redpanda:
+    image: redpandadata/redpanda:v24.2.7
+    command: [redpanda, start, --smp=2, --memory=4G, --overprovisioned,
+              --kafka-addr=internal://0.0.0.0:9092, --advertise-kafka-addr=internal://redpanda:9092]
+    volumes: [redpanda:/var/lib/redpanda/data]
+    healthcheck: { test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"], interval: 5s, retries: 30 }
+    restart: unless-stopped
+    logging: *logging
+
+  fetcher:
+    <<: *indexer
+    command: ["fetch"]
+    depends_on: { postgres: { condition: service_healthy }, redpanda: { condition: service_healthy } }
+    healthcheck: { test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/health >/dev/null"], interval: 10s, retries: 6 }
+
+  writer:
+    <<: *indexer
+    command: ["write"]
+    depends_on: { postgres: { condition: service_healthy }, redpanda: { condition: service_healthy } }
+    healthcheck: { test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/health >/dev/null"], interval: 10s, retries: 6 }
+
+  api:
+    <<: *indexer
+    command: ["api"]
+    environment:
+      <<: *env
+      UI_ENABLED: "false"                       # the UI is served by the public gateway
+      API_KEYS: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY (shared with the gateway)}
+      TRUST_PROXY: "true"                       # X-Forwarded-For comes from the gateway
+      RATE_LIMIT_RPS: "0"                       # rate limiting happens at the edge
+      CACHE_TTL: 10s
+      LABELS_TOKEN: ${LABELS_TOKEN:-}
+      TLS_CERT_FILE: ${TLS_CERT_FILE:-}         # e.g. /certs/api.crt (mTLS: set all three)
+      TLS_KEY_FILE: ${TLS_KEY_FILE:-}
+      TLS_CLIENT_CA_FILE: ${TLS_CLIENT_CA_FILE:-}
+    volumes: ["${CERTS_DIR:-../certs/out}:/certs:ro"]
+    depends_on: { postgres: { condition: service_healthy } }
+    ports:
+      - "${PRIVATE_BIND:?set PRIVATE_BIND to the tunnel IP, e.g. 10.77.0.2}:8080:8080"
+    healthcheck: { test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9100/health >/dev/null"], interval: 10s, retries: 6 }
+
+volumes:
+  pgdata:
+  redpanda:

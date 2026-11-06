@@ -1,0 +1,48 @@
+# Public (edge) server: HTTPS (Caddy) → gateway → tunnel → private indexer API.
+# The gateway contains no database or ingestion code and holds no database
+# credentials, only the internal API key and (with mTLS) its client certificate.
+#
+#   cp .env.example .env && docker compose up -d --build --wait
+
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN (public hostname)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [gateway]
+    restart: unless-stopped
+
+  gateway:
+    build: { context: ../.., target: gateway }
+    image: stellar-gateway:latest
+    environment:
+      UPSTREAM_URL: ${UPSTREAM_URL:-http://10.77.0.2:8080}   # https://… with mTLS
+      UPSTREAM_API_KEY: ${INTERNAL_API_KEY:?set INTERNAL_API_KEY}
+      UPSTREAM_CA_FILE: ${UPSTREAM_CA_FILE:-}                # /certs/ca.crt
+      UPSTREAM_CERT_FILE: ${UPSTREAM_CERT_FILE:-}            # /certs/gateway.crt
+      UPSTREAM_KEY_FILE: ${UPSTREAM_KEY_FILE:-}              # /certs/gateway.key
+      UPSTREAM_SERVER_NAME: ${UPSTREAM_SERVER_NAME:-}        # if the cert SAN is a name, not the IP
+      TRUST_PROXY: "true"                                    # Caddy sets X-Forwarded-For
+      RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-20}
+      RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-40}
+      EDGE_CACHE_TTL: ${EDGE_CACHE_TTL:-5s}
+      API_KEYS: ${PUBLIC_API_KEYS:-}                         # optional: require keys from clients
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      METRICS_ADDR: 0.0.0.0:9100
+      LOG_FORMAT: json
+    volumes: ["${CERTS_DIR:-../certs/out}:/certs:ro"]
+    ports: ["127.0.0.1:9100:9100"]                          # metrics: local scrape only
+    healthcheck: { test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null"], interval: 10s, retries: 6 }
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
+
+volumes:
+  caddy_data:
+  caddy_config:

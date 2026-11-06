@@ -1,0 +1,11 @@
+# /etc/wireguard/wg0.conf on the EDGE (public) server.
+# It is the only side with an open port (UDP 51820). Keys: wg genkey | tee priv | wg pubkey
+[Interface]
+Address = 10.77.0.1/24
+ListenPort = 51820
+PrivateKey = <edge-private-key>
+
+[Peer]
+# private indexer server
+PublicKey = <private-server-public-key>
+AllowedIPs = 10.77.0.2/32

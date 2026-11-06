@@ -1,0 +1,13 @@
+# /etc/wireguard/wg0.conf on the PRIVATE (indexer) server.
+# It dials out to the edge and keeps the tunnel open, so it needs no inbound
+# port at all and can sit behind NAT.
+[Interface]
+Address = 10.77.0.2/24
+PrivateKey = <private-server-private-key>
+
+[Peer]
+# edge server
+PublicKey = <edge-public-key>
+Endpoint = edge.example.org:51820
+AllowedIPs = 10.77.0.1/32
+PersistentKeepalive = 25
