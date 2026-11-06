@@ -1,6 +1,49 @@
-# HTTP API: design notes
+# HTTP API
 
 The contract is `internal/api/openapi.yaml`, served at `/openapi.yaml`. A test (`TestOpenAPICoversRoutes`) fails when a registered route is undocumented, or when the spec documents a route that doesn't exist.
+
+## Endpoints
+
+Middleware, security and probes are described below. The read API is public by default; set `API_KEYS` to require a key. Label writes are closed unless `LABELS_TOKEN` or `LABELS_OPEN` is set. Requests are rate-limited per client IP, and heavy analytics responses are cached for `CACHE_TTL`. Analytics windows end at the newest indexed ledger (`index_now()`). Prices, candles, PnL, leaderboards and alerts use verified fills only.
+
+Asset parameters accept `native`/`XLM`, `CODE:ISSUER`, or a contract id.
+
+| Endpoint | Description |
+|---|---|
+| `/health`, `/ready`, `/metrics`, `/openapi.yaml` | liveness, readiness (DB + freshness ≤ `READY_MAX_LAG`), Prometheus metrics, API contract |
+| `/status` | cursor, lag, pipeline component heartbeats, ledger gaps |
+| `/search?q` | classify a ledger number, tx hash, G…/C… address or asset code into entities in the index |
+| `/ledgers?limit&before`, `/ledgers/{seq}` | ledgers with tx list |
+| `/transactions?successful&soroban&source&contract&function&ledger&before` | filtered tx feed (page with `before=<id>`) |
+| `/transactions/{hash}` | tx with operations, transfers, trades, contract and protocol events |
+| `/operations?type&source&successful&before` | typed operation feed |
+| `/accounts/top`, `/accounts/{id}` | balances, trustlines, offers, 24h activity |
+| `/accounts/{id}/operations?before`, `/transfers`, `/trades`, `/events` | account history (`events` = protocol events as user) |
+| `/assets?hours`, `/assets/{key}`, `/assets/{key}/holders` | most active assets; per-asset transfer, mint and burn totals and top pairs; largest indexed holders |
+| `/pairs?hours` | top pairs: trades, volume, VWAP, last price, venues |
+| `/trades?base&counter&venue&taker&pool&before` | latest fills |
+| `/transfers?asset&type&before` | token-flow feed |
+| `/price?base&counter` | last price, 24h open/high/low/volume/change |
+| `/candles?base&counter&interval=1m\|5m\|15m\|30m\|1h\|4h\|1d&from&to` | OHLCV |
+| `/pools` | classic AMM pools: reserves and spot price |
+| `/logos`, `/assets/{key}/logo` | asset keys with a resolved issuer logo; the logo itself (PNG, re-encoded by the indexer) |
+| `/protocols?hours` | per-protocol events, users, contracts, action breakdown; trades per venue |
+| `/protocols/{name}/summary?hours` | actions, per-asset amounts, contracts, users, pools and hourly timeline for one protocol |
+| `/protocols/{name}/events?action&user&contract&asset&before` | decoded protocol events |
+| `/contracts?hours`, `/contracts/{id}` | most active contracts (calls + events); one contract's functions, topics and protocol actions |
+| `/contracts/{id}/events?topic&before`, `/events?contract&topic&protocol&before` | raw decoded contract events (`protocol=none` = no decoder matched) |
+| `/stats/network?hours&bucket=minute\|hour\|day` | tx, ops, failure, Soroban share and fees over time |
+| `/stats/operations?hours` | operation mix |
+| `/stats/tables` | table sizes and row estimates |
+| `/accounts/{id}/portfolio?history=false` | holdings valued in XLM/USD, totals, 24h/7d change, hourly value history |
+| `/accounts/{id}/stats?hours` | indicators: volume, PnL, round trips, fees, first/last seen, heatmap, counterparties, largest transfers, flows, protocols |
+| `/accounts/{id}/tags` | automatic tags (with reasons) + user labels |
+| `/labels?tag&address`, `/labels/tags` | user labels; tag counts |
+| `POST /labels` `{address, tag, note}`, `DELETE /labels/{address}/{tag}` | add/update or remove a label (Bearer `LABELS_TOKEN` when set) |
+| `/leaderboards?hours&limit` | traders, arbitrageurs, active, fee_payers, pools, protocol_users, whales (rows carry `labels`) |
+| `/alerts?hours&min_xlm&min_profit&min_move&kinds` | notable events: large_transfer, large_trade, flash_loan, arbitrage, price_move, new_asset |
+
+Feeds use keyset pagination: pass the last row's position as `before`. That is the `id` for transactions and operations, and dot-separated position columns for the rest: `ledger.tx_index.transfer_index` for transfers, `ledger.tx_index.op_index.trade_index` for trades, `ledger.tx_index.op_index.event_index` for events.
 
 ## Layering
 

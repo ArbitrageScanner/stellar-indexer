@@ -64,7 +64,9 @@ writer commits offsets only after the DB transaction. The store skips every
 ledger at or below its cursor, and the cursor moves in the same transaction as
 the data. Redelivery after any crash is therefore a no-op: the pipeline is
 effectively exactly-once. This is covered by `internal/ingest/pipeline_test.go`
-and a chaos run (README).
+and by a chaos run against real Redpanda and Postgres (`kill -9` of the
+fetcher and writer, Redpanda and Postgres stopped mid-stream), after which
+every check in `scripts/check-invariants.sql` passed.
 
 ### ADR-4: index from launch; restarts resume, they never re-scan
 History is out of scope by design (`START_LEDGER=latest`). Every component

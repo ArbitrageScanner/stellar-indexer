@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Heuristic thresholds for automatic tags (documented in the README and on
+// Heuristic thresholds for automatic tags (documented in docs/DATA.md and on
 // the UI's Tags page).
 const (
 	WhaleXLM          = 1_000_000
