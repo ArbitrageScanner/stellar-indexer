@@ -27,7 +27,7 @@ export function chip(t, { removable = false, address = '' } = {}) {
   const color = GROUP_COLOR[t.group] || 'var(--muted)';
   const label = t.kind === 'user' ? `#${t.label}` : t.label;
   const href = t.kind === 'user' ? `#/tags?tag=${encodeURIComponent(t.id)}` : '#/tags?auto=1';
-  return html`<span class="chip ${t.kind}" data-tip="${t.reason || (t.kind === 'user' ? 'User label' : '')}"><span class="sw" style="background:${raw(color)}"></span><a href="${href}">${label}</a>${removable && t.kind === 'user' ? html`<button class="chip-x" data-untag="${t.id}" data-address="${address}" title="Remove label">×</button>` : ''}</span>`;
+  return html`<span class="chip ${t.kind}" data-tip="${t.reason || (t.kind === 'user' ? 'User label' : '')}"><span class="sw" style="background:${raw(color)}"></span><a href="${href}">${label}</a>${removable && t.kind === 'user' ? html`<button type="button" class="chip-x" data-untag="${t.id}" data-address="${address}" title="Remove label" aria-label="Remove label ${label}">×</button>` : ''}</span>`;
 }
 
 export const labelChips = (labels) => labels?.length ? html`${labels.map((l) => chip({ id: l, label: l, kind: 'user', group: 'user' }))}` : '';
@@ -36,8 +36,8 @@ export const labelChips = (labels) => labels?.length ? html`${labels.map((l) => 
 export async function tagBar(el, address, { editable = true } = {}) {
   const draw = (tags) => {
     el.innerHTML = '';
-    el.insertAdjacentHTML('beforeend', html`<div class="chips">${tags.length ? tags.map((t) => chip(t, { removable: editable, address })) : html`<span class="muted" style="font-size:12.5px">No tags yet.</span>`}
-      ${editable ? html`<form class="tag-form" data-tagform><input name="tag" placeholder="+ tag" maxlength="32" aria-label="Add a tag" list="known-tags"><input name="note" placeholder="note (optional)" maxlength="280"><button class="btn sm">Add</button><datalist id="known-tags"></datalist></form>` : ''}</div>`.s);
+    el.insertAdjacentHTML('beforeend', html`<div class="chips">${tags.length ? tags.map((t) => chip(t, { removable: editable, address })) : html`<span class="muted chips-empty">No tags yet.</span>`}
+      ${editable ? html`<form class="tag-form" data-tagform><input name="tag" placeholder="Add tag" maxlength="32" aria-label="Add a tag" list="known-tags"><input name="note" placeholder="Note (optional)" maxlength="280" aria-label="Note (optional)"><button type="submit" class="btn sm">Add</button><datalist id="known-tags"></datalist></form>` : ''}</div>`.s);
     const f = el.querySelector('[data-tagform]');
     f?.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -76,12 +76,12 @@ export function addWatch(addrs) { saveWatch([...watchlist(), ...addrs]); }
 
 export function watchBtn(a) {
   const on = isWatched(a);
-  return html`<button class="btn ${on ? 'primary' : ''}" data-watch="${a}">${on ? '★ Watching' : '☆ Watch'}</button>`;
+  return html`<button type="button" class="btn ${on ? 'primary' : ''}" data-watch="${a}" aria-pressed="${on ? 'true' : 'false'}">${on ? 'Watching' : 'Watch'}</button>`;
 }
 export function bindWatch(root) {
   root.querySelectorAll('[data-watch]').forEach((b) => b.addEventListener('click', () => {
     const on = toggleWatch(b.dataset.watch);
     b.classList.toggle('primary', on);
-    b.textContent = on ? '★ Watching' : '☆ Watch';
+    b.textContent = on ? 'Watching' : 'Watch'; b.setAttribute('aria-pressed', on ? 'true' : 'false');
   }));
 }

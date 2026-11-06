@@ -5,9 +5,13 @@ export default async function trades(view, _p, query, ctx) {
   let venueF = query.venue || '';
   setHTML(view, html`
     ${pageHead('Trades', { sub: 'Every fill across venues, newest first, from the taker’s point of view: what the taker sold and what they received. Pages back through history with keyset pagination.' })}
-    <div class="toolbar">${seg('venue', [['', 'All venues'], ...Object.entries(VENUE_LABEL).filter(([k]) => k !== 'blend')], venueF)}
-      <span class="grow"></span><input id="taker" type="search" placeholder="Filter by taker G… / C…" value="${query.taker || ''}" style="width:320px"></div>
-    <div class="card"><div class="card-body flush" id="list"></div></div>`);
+    <section class="card mkt-pin">
+      <div class="card-head mkt-filters">
+        ${seg('venue', [['', 'All venues'], ...Object.entries(VENUE_LABEL).filter(([k]) => k !== 'blend')], venueF)}
+        <input id="taker" class="mkt-taker" type="search" placeholder="Filter by taker G… / C…" aria-label="Filter by taker account or contract" value="${query.taker || ''}">
+      </div>
+      <div class="card-body flush" id="list"></div>
+    </section>`);
   const list = view.querySelector('#list');
   const run = () => {
     const taker = view.querySelector('#taker').value.trim();

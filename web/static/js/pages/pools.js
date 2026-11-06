@@ -5,7 +5,7 @@ export default async function pools(view, _p, query) {
   setHTML(view, html`
     ${pageHead('Liquidity pools', { sub: html`Classic constant-product AMM pools (CAP-38) touched since indexing began, ordered by number of participants. Soroban DEX pools (Soroswap, Aquarius, CLMM) are under <a href="#/protocols">Protocols</a>.` })}
     <div class="tiles" id="tiles"></div>
-    <div class="card"><div class="card-head"><h2>Pools</h2><input type="search" id="f" placeholder="Filter by asset code" value="${query.id || ''}"></div><div class="card-body flush" id="list"></div></div>`);
+    <div class="card mkt-pin"><div class="card-head"><h2>Pools</h2><input type="search" id="f" class="mkt-pool-filter" placeholder="Filter by asset code" aria-label="Filter pools by asset code or pool id" value="${query.id || ''}"></div><div class="card-body flush" id="list"></div></div>`);
   let rows = [];
   const draw = () => {
     const q = view.querySelector('#f').value.trim().toUpperCase();
@@ -18,7 +18,7 @@ export default async function pools(view, _p, query) {
       { h: 'Fee', cls: 'num', v: (p) => `${p.fee_bp / 100}%` },
       { h: 'Participants', cls: 'num', v: (p) => num(p.trustline_count) },
       { h: 'Updated', cls: 'num', v: (p) => ledgerLink(p.last_modified) },
-      { h: 'Chart', v: (p) => html`<a href="#/pair/${encodeURIComponent(p.asset_a)}/${encodeURIComponent(p.asset_b)}">price</a>` },
+      { h: 'Chart', v: (p) => html`<a href="#/pair/${encodeURIComponent(p.asset_a)}/${encodeURIComponent(p.asset_b)}">Price</a>` },
       { h: 'Id', v: (p) => { const u = expertURL('pool', p.pool_id); return u ? html`<a class="ext mono" href="${u}" target="_blank" rel="noopener">${short(p.pool_id, 6, 4)} ${icon('ext')}</a>` : html`<span class="mono">${short(p.pool_id, 6, 4)}</span>`; } },
     ], list, { emptyTitle: rows.length ? 'No pool matches' : 'No pools indexed yet', emptyText: 'Pools appear after a ledger touches their entry (a trade, deposit or withdrawal).' }));
   };

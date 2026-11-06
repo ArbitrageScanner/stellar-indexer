@@ -1,9 +1,10 @@
 import { get, qs } from '../api.js';
 import { html, setHTML, load, feed, pageHead, seg, bindSeg, card, tile, table, num, compact, amount, amt7, price, when, addr, txLink,
-  asset, tag, hbars, pairLink, raw, venueColor, empty, unverified } from '../ui.js';
+  asset, tag, hbars, pairLink, raw, venueColor, empty, unverified, logoMark } from '../ui.js';
 import { columns } from '../charts.js';
 import { PROTOCOLS, protoName } from '../protocols-meta.js';
 
+const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const LENDING = ['supply', 'supply_collateral', 'withdraw', 'withdraw_collateral', 'borrow', 'repay', 'flash_loan'];
 
 export default async function protocol(view, [name], query, ctx) {
@@ -12,13 +13,13 @@ export default async function protocol(view, [name], query, ctx) {
   let scope = query.verified === 'all' ? 'all' : '';
   const m = PROTOCOLS[name];
   setHTML(view, html`
-    ${pageHead(html`<span style="display:inline-flex;align-items:center;gap:10px"><span class="proto-card" style="padding:0"><span class="logo" style="width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:#fff;font-size:13px;background:${raw(venueColor(name))}">${protoName(name)[0]}</span></span>${protoName(name)}</span>`, {
-      crumbs: html`<a href="#/protocols">Protocols</a> / ${protoName(name)}`,
+    ${pageHead(html`<span class="sor-ptitle">${logoMark(name, 'sor-logo sor-logo-img') || html`<span class="sor-logo" style="background:${raw(venueColor(name))}" aria-hidden="true">${protoName(name)[0]}</span>`}${protoName(name)}</span>`, {
+      crumbs: html`<a href="#/protocols">Protocols</a><span aria-hidden="true">/</span><span>${protoName(name)}</span>`,
       sub: m?.about || 'Decoded protocol events.',
       actions: html`${seg('scope', [['', 'Verified'], ['all', 'Include unverified']], scope)}${seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours)}`,
     })}
     <div id="summary"></div>
-    <div class="card" style="margin-top:16px"><div class="card-head"><h2>Events</h2><span id="aseg"></span></div><div class="card-body flush" id="events"></div></div>`);
+    <section class="card sor-section"><div class="card-head"><h2>Events</h2><span id="aseg"></span></div><div class="card-body flush" id="events"></div></section>`);
 
   const run = () => load(view.querySelector('#summary'), () => get(`/protocols/${name}/summary` + qs({ hours, verified: scope })), (s) => {
     const ev = s.actions.reduce((a, r) => a + r.events, 0);
@@ -31,19 +32,20 @@ export default async function protocol(view, [name], query, ctx) {
       ${s.unverified_events && !scope ? html`<div class="notice">${raw('<i data-icon="alert"></i>')}<div><b>${num(s.unverified_events)}</b> events in this window come from contracts whose code is not allowlisted for ${protoName(name)} (possible spoofs or unknown versions). They are excluded from these figures, prices and analytics; switch to “Include unverified” to inspect them.</div></div>` : ''}
       <div class="tiles">
         ${tile('Events', compact(ev), { title: num(ev) })}
-        ${tile('Transactions', compact(Math.max(0, ...s.actions.map((a) => a.txs))), { foot: 'max over actions' })}
+        ${tile('Transactions', compact(Math.max(0, ...s.actions.map((a) => a.txs))), { foot: 'Max over actions' })}
         ${tile('Active contracts', num(s.contracts.length))}
-        ${tile('Users', num(Math.max(0, ...s.actions.map((a) => a.users))), { foot: 'max over actions' })}
+        ${tile('Users', num(Math.max(0, ...s.actions.map((a) => a.users))), { foot: 'Max over actions' })}
         ${s.pools.length ? tile('Fills', compact(s.pools.reduce((a, p) => a + p.trades, 0))) : ''}
       </div>
-      <div class="grid g-main" style="margin-bottom:16px">
+      <div class="grid g-main sor-gap">
         ${card('Activity per hour', html`<div id="tl"></div>`)}
         ${card('Actions', hbars(s.actions.map((a) => ({ label: a.action, value: a.events, title: `${a.action}: ${num(a.events)} events by ${num(a.users)} users in ${num(a.txs)} txs` }))))}
       </div>
+      <div class="stack">
       ${assets.length ? card('Lending by asset', html`<div class="table-wrap">${table([
         { h: 'Asset', v: (a) => asset(a) },
-        ...LENDING.filter((act) => lending.some((r) => r.action === act)).map((act) => ({ h: act.replace('_collateral', ' coll.').replace('_', ' '), cls: 'num', v: (a) => { const c = cell(a, act); return c ? html`${compact(c.amount0)}<div class="muted" style="font-size:11px">${num(c.events)} ev</div>` : html`<span class="muted">—</span>`; } })),
-      ], assets)}</div>`, { flush: true, hint: 'sum of underlying amounts (amount0) per action' }) : ''}
+        ...LENDING.filter((act) => lending.some((r) => r.action === act)).map((act) => ({ h: cap(act.replace('_collateral', ' coll.').replace('_', ' ')), cls: 'num', v: (a) => { const c = cell(a, act); return c ? html`${compact(c.amount0)}<div class="sor-sub">${num(c.events)} ev</div>` : html`<span class="muted">—</span>`; } })),
+      ], assets)}</div>`, { flush: true, hint: 'Sum of underlying amounts (amount0) per action' }) : ''}
       ${s.pools.length ? card('Top pools', table([
         { h: 'Pool', v: (p) => addr(p.pool) },
         { h: 'Pair', v: (p) => pairLink(p.base, p.counter) },
@@ -52,19 +54,20 @@ export default async function protocol(view, [name], query, ctx) {
         { h: 'Last price', cls: 'num', v: (p) => price(p.last_price) },
         { h: 'Takers', cls: 'num', v: (p) => num(p.takers) },
       ], s.pools.slice(0, 15), { rowHref: (p) => `#/pair/${encodeURIComponent(p.base)}/${encodeURIComponent(p.counter)}` }), { flush: true }) : ''}
-      <div class="grid g2" style="margin-top:16px">
+      <div class="grid g2">
         ${card('Contracts', table([
           { h: 'Contract', v: (c) => addr(c.contract_id) },
           { h: 'Events', cls: 'num', v: (c) => num(c.events) },
           { h: 'Users', cls: 'num', v: (c) => num(c.users) },
-          { h: 'Actions', v: (c) => html`${c.actions.slice(0, 3).map((a) => html`${tag(a)} `)}${c.actions.length > 3 ? html`<span class="muted">+${c.actions.length - 3}</span>` : ''}` },
+          { h: 'Actions', v: (c) => html`<span class="sor-tags">${c.actions.slice(0, 3).map((a) => tag(a))}${c.actions.length > 3 ? html`<span class="muted">+${c.actions.length - 3}</span>` : ''}</span>` },
         ], s.contracts.slice(0, 15), { rowHref: (c) => `#/contract/${c.contract_id}` }), { flush: true })}
         ${card('Top users', table([
           { h: 'User', v: (u) => addr(u.user_addr) },
           { h: 'Events', cls: 'num', v: (u) => num(u.events) },
           { h: 'Txs', cls: 'num', v: (u) => num(u.txs) },
-          { h: 'Actions', v: (u) => html`${u.actions.slice(0, 3).map((a) => html`${tag(a)} `)}` },
+          { h: 'Actions', v: (u) => html`<span class="sor-tags">${u.actions.slice(0, 3).map((a) => tag(a))}</span>` },
         ], s.users, { rowHref: (u) => `#/${u.user_addr[0] === 'C' ? 'contract' : 'account'}/${u.user_addr}` }), { flush: true })}
+      </div>
       </div>`;
   }, {
     after: (el, s) => {
@@ -80,7 +83,7 @@ export default async function protocol(view, [name], query, ctx) {
     rowHref: (e) => `#/tx/${e.tx_hash}`,
     cols: [
       { h: 'Time', v: (e) => when(e.closed_at) },
-      { h: 'Action', v: (e) => html`${tag(e.action)}${unverified(e)}` },
+      { h: 'Action', v: (e) => html`<span class="sor-tags">${tag(e.action)}${unverified(e)}</span>` },
       { h: 'User', v: (e) => addr(e.user_addr) },
       { h: 'Asset', v: (e) => e.asset ? asset(e.asset) : '—' },
       { h: 'Amount 0', cls: 'num', v: (e) => e.amount0 ? amt7(e.amount0) : '—' },

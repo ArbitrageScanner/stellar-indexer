@@ -7,14 +7,18 @@ const usd = (v) => v === null || v === undefined ? '—' : '$' + compact(v);
 export default async function watch(view) {
   setHTML(view, html`
     ${pageHead('Watchlist', { sub: 'Addresses you follow, with live net worth, tags and last activity. The list is stored in this browser; labels are shared through the API.' })}
-    <form class="toolbar" id="add"><input name="a" placeholder="Add G… or C… address" style="flex:1;max-width:480px" pattern="[GCM][A-Z2-7]{55,68}" required>
-      <button class="btn primary">${icon('check')}Add</button><span class="grow"></span>
-      <input name="tag" placeholder="import by #tag" style="width:160px"><button class="btn" name="imp" value="1" formnovalidate>Import</button></form>
-    <div class="card"><div class="card-body flush" id="list"></div></div>`);
+    <section class="card acct-watch" aria-label="Watched addresses">
+      <form class="acct-bar" id="add">
+        <div class="acct-field acct-field-grow"><input name="a" placeholder="Add G… or C… address" aria-label="Address to watch" autocomplete="off" spellcheck="false" pattern="[GCM][A-Z2-7]{55,68}" required>
+          <button type="submit" class="btn primary">${icon('check')}Add</button></div>
+        <div class="acct-field"><input name="tag" placeholder="Import by #tag" aria-label="Tag to import" autocomplete="off"><button type="submit" class="btn" name="imp" value="1" formnovalidate>Import</button></div>
+      </form>
+      <div class="card-body flush" id="list"></div>
+    </section>`);
   const listEl = view.querySelector('#list');
   const draw = async () => {
     const list = watchlist();
-    if (!list.length) { setHTML(listEl, empty('Your watchlist is empty', 'Add an address above, use ☆ Watch on any address page, or import everyone carrying one of your #tags.', 'user')); return; }
+    if (!list.length) { setHTML(listEl, empty('Your watchlist is empty', 'Add an address above, use Watch on any address page, or import everyone carrying one of your #tags.', 'user')); return; }
     setHTML(listEl, html`<div class="skel-rows">${list.map(() => html`<div class="skel"></div>`)}</div>`);
     const rows = await Promise.all(list.map(async (a) => {
       const [pf, tags, st] = await Promise.all([
@@ -31,7 +35,7 @@ export default async function watch(view) {
       { h: '24h', cls: 'num', v: (r) => r.pf?.change_24h_pct !== null && r.pf?.change_24h_pct !== undefined ? html`<span class="${r.pf.change_24h_pct > 0 ? 'up' : r.pf.change_24h_pct < 0 ? 'down' : 'muted'}">${pct(r.pf.change_24h_pct, 2, true)}</span>` : '—' },
       { h: 'Volume 24h', cls: 'num', v: (r) => r.st ? `${compact(r.st.trading.volume_xlm)} XLM` : '—' },
       { h: 'Last seen', v: (r) => r.st?.seen?.last_seen ? ago(r.st.seen.last_seen) : '—' },
-      { h: '', v: (r) => html`<a class="btn sm" href="#/compare?a=${r.a}">compare</a> <button class="btn sm ghost" data-rm="${r.a}" title="Remove">✕</button>` },
+      { h: '', cls: 'num', v: (r) => html`<span class="acct-acts"><a class="btn sm" href="#/compare?a=${r.a}">Compare</a><button type="button" class="btn sm ghost acct-x" data-rm="${r.a}" title="Remove" aria-label="Remove ${r.a} from the watchlist">${icon('x')}</button></span>` },
     ], rows, { rowHref: (r) => `#/account/${r.a}` }));
     listEl.querySelectorAll('[data-rm]').forEach((b) => b.addEventListener('click', () => { toggleWatch(b.dataset.rm); draw(); }));
   };

@@ -75,16 +75,16 @@ function fill(path, s) {
 export default async function playground(view, _p, query, ctx) {
   setHTML(view, html`
     ${pageHead('API playground', { sub: html`Every endpoint of the indexer’s JSON API, with examples filled from live data. Edit the path, run it, and copy the request as curl, JavaScript or Python. All endpoints are <code>GET</code>, return JSON and send <code>Access-Control-Allow-Origin: *</code>.` })}
-    <div class="pg">
+    <div class="pg sor-pg">
       <nav class="card pg-list" id="list"><div class="skel-rows"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></nav>
       <div class="stack">
         <div class="card"><div class="card-body">
-          <form class="pg-url" id="form"><input id="path" spellcheck="false" aria-label="Request path"><button class="btn primary">${icon('play')}Run</button></form>
-          <div class="muted" id="desc" style="margin-top:8px;font-size:13px"></div>
-          <div style="margin-top:12px" id="snip-tabs"></div>
+          <form class="pg-url" id="form"><input id="path" name="path" autocomplete="off" spellcheck="false" aria-label="Request path"><button type="submit" class="btn primary">${icon('play')}Run</button></form>
+          <p class="sor-desc" id="desc"></p>
+          <div class="sor-snip-tabs" id="snip-tabs"></div>
           <div class="curl" id="snip"></div>
         </div></div>
-        <div class="card"><div class="card-head"><h2>Response</h2><div class="actions" style="display:flex;gap:6px"><button class="btn sm" id="copy-resp">${icon('copy')}Copy</button><a class="btn sm" id="open-new" target="_blank" rel="noopener">${icon('ext')}Open</a></div></div>
+        <div class="card"><div class="card-head"><h2>Response</h2><div class="actions sor-actions"><button type="button" class="btn sm" id="copy-resp">${icon('copy')}Copy</button><a class="btn sm" id="open-new" target="_blank" rel="noopener">${icon('ext')}Open</a></div></div>
           <div class="card-body"><div class="pg-meta" id="meta"></div><div id="resp"></div></div></div>
       </div>
     </div>`);
@@ -125,8 +125,8 @@ export default async function playground(view, _p, query, ctx) {
       if (!ctx.alive()) return;
       last = r;
       const count = Array.isArray(r.body) ? `${num(r.body.length)} items` : r.body && typeof r.body === 'object' ? `${Object.keys(r.body).length} keys` : '';
-      setHTML(meta, html`<span>Status <b style="color:${raw(r.ok ? 'var(--good-ink)' : 'var(--critical)')}">${r.status}</b></span><span>Time <b>${num(r.ms)} ms</b></span><span>Size <b>${bytes(r.bytes)}</b></span>${count ? html`<span><b>${count}</b></span>` : ''}<span class="mono">${r.type}</span>`);
-      setHTML(resp, r.body !== null ? html`<pre class="json" style="max-height:640px">${jsonHTML(r.body)}</pre>` : html`<pre class="json">${r.text.slice(0, 20000)}</pre>`);
+      setHTML(meta, html`<span>Status <b class="${r.ok ? 'sor-ok' : 'sor-bad'}">${r.status}</b></span><span>Time <b>${num(r.ms)} ms</b></span><span>Size <b>${bytes(r.bytes)}</b></span>${count ? html`<span><b>${count}</b></span>` : ''}<span class="mono">${r.type}</span>`);
+      setHTML(resp, r.body !== null ? html`<pre class="json sor-resp">${jsonHTML(r.body)}</pre>` : html`<pre class="json">${r.text.slice(0, 20000)}</pre>`);
     } catch (e) {
       setHTML(meta, '');
       setHTML(resp, errorBox(e, false));

@@ -9,9 +9,9 @@ export default async function contracts(view, _p, query, ctx) {
       sub: 'Most active Soroban contracts, combining direct invocations (transactions calling the contract) with the events it emitted. Token contracts are labelled with their asset.',
       actions: seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours),
     })}
-    <form class="toolbar" id="open"><input name="id" type="search" placeholder="Open contract C…" style="flex:1;max-width:520px" required pattern="C[A-Z2-7]{55}"><button class="btn primary">${icon('search')}Open</button></form>
-    <div class="grid g2" style="margin-bottom:16px">${card('Most called', html`<div id="b1"></div>`)}${card('Most events', html`<div id="b2"></div>`)}</div>
-    <div class="card"><div class="card-body flush" id="list"></div></div>`);
+    <form class="sor-open" id="open" role="search"><input name="id" type="search" placeholder="Open contract C…" aria-label="Contract ID" autocomplete="off" spellcheck="false" required pattern="C[A-Z2-7]{55}"><button type="submit" class="btn primary">${icon('search')}Open</button></form>
+    <div class="grid g2 sor-gap">${card('Most called', html`<div id="b1"></div>`)}${card('Most events', html`<div id="b2"></div>`)}</div>
+    <section class="card" aria-label="Contracts"><div class="card-body flush" id="list"></div></section>`);
   view.querySelector('#open').addEventListener('submit', (e) => { e.preventDefault(); location.hash = `/contract/${new FormData(e.target).get('id').trim()}`; });
   const label = (c) => c.token ? asset(c.token) : c.protocol ? tag(protoName(c.protocol)) : '';
   const run = () => load(view.querySelector('#list'), () => get('/contracts' + qs({ hours, limit: 200 })), (rows) => {
@@ -25,7 +25,7 @@ export default async function contracts(view, _p, query, ctx) {
       { h: 'Failed', cls: 'num', v: (c) => c.calls ? pct(c.failed_calls / c.calls * 100, 0) : '—' },
       { h: 'Callers', cls: 'num', v: (c) => num(c.callers) },
       { h: 'Events', cls: 'num', v: (c) => num(c.events) },
-      { h: 'Functions / topics', v: (c) => html`${(c.functions || []).slice(0, 3).map((f) => html`<b>${f}</b> `)}${(c.topics || []).slice(0, 3).map((t) => html`${tag(t)} `)}` },
+      { h: 'Functions / topics', v: (c) => html`<span class="sor-tags">${(c.functions || []).slice(0, 3).map((f) => html`<b class="sor-fn">${f}</b>`)}${(c.topics || []).slice(0, 3).map((t) => tag(t))}</span>` },
       { h: 'Last event', v: (c) => c.last_seen ? when(c.last_seen) : '—' },
     ], rows, { rowHref: (c) => `#/contract/${c.contract_id}`, emptyTitle: 'No contract activity in this window' });
   });

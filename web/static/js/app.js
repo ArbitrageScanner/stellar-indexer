@@ -3,6 +3,7 @@
 import { get, qs, apiBase, setApiBase } from './api.js';
 import { html, setHTML, hydrate, icon, iconSVG, state, num, duration, short, errorBox, toast } from './ui.js';
 import { disposeCharts } from './charts.js';
+import { loadLogos } from './logos.js';
 
 // [pattern, module, nav key]
 const routes = [
@@ -108,8 +109,8 @@ async function pollStatus() {
     const tipLag = s.lag_ledgers ?? null;
     let cls = 'ok', text;
     if (!s.cursor) { cls = 'behind'; text = 'No data yet'; }
-    else if (lag !== null && lag > 60) { cls = 'behind'; text = `Catching up · ${duration(lag)} behind`; }
-    else text = `Live · #${num(s.cursor)}${lag !== null ? ` · ${lag}s` : ''}`;
+    else if (lag !== null && lag > 60) { cls = 'behind'; text = `Catching up, ${duration(lag)} behind`; }
+    else text = `Live at #${num(s.cursor)}${lag !== null ? `, ${lag}s lag` : ''}`;
     live.className = 'live ' + cls;
     live.querySelector('.live-text').textContent = text;
     live.title = `Network: ${s.network}\nCursor: ${s.cursor}\nRPC tip: ${s.rpc_tip || 'n/a (API-only mode)'}${tipLag !== null ? `\nLedgers behind tip: ${tipLag}` : ''}\nIndexed ledgers: ${s.ledgers_indexed}`;
@@ -214,7 +215,7 @@ dlg.addEventListener('close', () => {
   } else if (dlg.returnValue === 'reset') setApiBase('');
   else return;
   state.network = '';
-  pollStatus().then(render);
+  Promise.all([pollStatus(), loadLogos()]).then(render);
   toast(`API: ${apiBase() || location.origin}`);
 });
 
@@ -222,5 +223,7 @@ dlg.addEventListener('close', () => {
 
 hydrate(document);
 window.addEventListener('hashchange', render);
-pollStatus().finally(render);
+// Logos never hold up the first paint for long; later views pick them up.
+Promise.all([pollStatus(), Promise.race([loadLogos(), new Promise((r) => setTimeout(r, 1500))])]).finally(render);
+setInterval(() => { if (!document.hidden) loadLogos(); }, 10 * 60 * 1000);
 setInterval(() => { if (!document.hidden) pollStatus(); }, 5000);

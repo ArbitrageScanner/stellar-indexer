@@ -1,0 +1,94 @@
+/* Screen styles for the soroban group. Tokens and shared components live in ../app.css; use var(--…) tokens only. */
+
+/* ---- Shared within the group ----------------------------------------------- */
+.sor-gap { margin-bottom: var(--space-md); }
+.sor-section { margin-top: var(--space-md); }
+.sor-tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs); }
+.sor-tags.sor-under { display: flex; margin-top: var(--space-3xs); }
+.sor-sub { margin-top: var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
+.sor-count { color: var(--color-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* Filter row at the head of a list card (events, alerts) */
+.sor-filters {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm) var(--space-md);
+  padding: var(--space-md) var(--space-lg); box-shadow: inset 0 -1px 0 var(--color-rule);
+}
+.sor-filters > .seg, .sor-filters > span { min-width: 0; max-width: 100%; }
+.sor-fields { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); margin-left: auto; }
+.sor-topic { width: 10rem; }
+.sor-contract { width: 16rem; }
+
+/* ---- Protocols ------------------------------------------------------------- */
+.sor-pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: var(--space-md); min-width: 0; }
+.sor-pgrid > .empty-state, .sor-pgrid > .error-box, .sor-pgrid > .skel-rows { grid-column: 1 / -1; }
+.sor-pgrid > .empty-state, .sor-pgrid > .skel-rows { border-radius: var(--radius-card); background: var(--glass); box-shadow: var(--glass-hi), var(--shadow-card); }
+.sor-pgrid > .skel-rows { padding: var(--space-lg); }
+.sor-meta { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-sm); margin-top: var(--space-3xs); font-size: var(--text-xs); color: var(--color-muted); }
+.sor-about { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--color-muted); text-wrap: pretty; }
+.sor-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); box-shadow: inset 0 1px 0 var(--color-rule), inset 0 -1px 0 var(--color-rule); }
+.sor-nums > div { padding: var(--space-sm) var(--space-sm) var(--space-sm) var(--space-md); font-size: var(--text-xs); color: var(--color-muted); box-shadow: inset 1px 0 0 var(--color-rule); }
+.sor-nums > div:first-child { padding-left: 0; box-shadow: none; }
+.sor-nums b { display: block; margin-bottom: var(--space-3xs); font: 500 var(--text-lg)/1.2 var(--font-display); color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.sor-mix .legend { margin-top: var(--space-xs); }
+.sor-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-xs); margin-top: auto; font-size: var(--text-xs); color: var(--color-muted); }
+
+/* ---- Protocol detail ------------------------------------------------------- */
+.sor-ptitle { display: inline-flex; align-items: center; gap: var(--space-sm); }
+.sor-logo {
+  display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: var(--radius-inner);
+  color: var(--color-on-series); font: 600 var(--text-md)/1 var(--font-body); letter-spacing: 0;
+}
+
+/* ---- Contracts ------------------------------------------------------------- */
+.sor-open { display: flex; gap: var(--space-xs); max-width: 40rem; margin-bottom: var(--space-md); }
+.sor-open input { flex: 1 1 20rem; font-family: var(--font-mono); }
+.sor-fn { font: 500 var(--text-xs)/1.4 var(--font-mono); color: var(--color-ink); }
+
+/* ---- Contract detail ------------------------------------------------------- */
+.sor-id { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-3xs); max-width: 100%; color: var(--color-ink-2); }
+.sor-id .mono { font-size: var(--text-sm); word-break: break-all; }
+.sor-wasm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-md);
+  padding: var(--space-sm) var(--space-lg); font-size: var(--text-xs); color: var(--color-muted); box-shadow: inset 0 1px 0 var(--color-row);
+}
+.sor-wasm .mono { color: var(--color-ink-2); word-break: break-all; }
+.sor-none { margin: 0; font-size: var(--text-sm); color: var(--color-muted); }
+.sor-tabs .tabs { margin-bottom: var(--space-md); }
+.sor-tf { padding-bottom: var(--space-sm); }
+.sor-tf:empty { display: none; }
+
+/* ---- Leaderboards ---------------------------------------------------------- */
+.sor-boards { display: flex; flex-direction: column; gap: var(--space-md); }
+
+/* ---- Notable events (alertRow is also drawn on the overview) ---------------- */
+.sor-akind { min-height: 0; padding-block: var(--space-3xs); }
+.sor-flow { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs); }
+.sor-arrow { color: var(--color-muted); }
+.sor-min { display: inline-flex; align-items: center; gap: var(--space-xs); margin-left: auto; font-size: var(--text-sm); color: var(--color-ink-2); }
+.sor-min input { width: 7.5rem; font-variant-numeric: tabular-nums; }
+@media (max-width: 40rem) {
+  .sor-arow { grid-template-columns: 32px minmax(0, 1fr); padding-inline: var(--space-md); }
+  .sor-arow .v { grid-column: 2; text-align: left; }
+}
+
+/* ---- API playground -------------------------------------------------------- */
+.sor-pg .pg-list a .m { font-size: var(--text-xs); }
+.sor-desc { min-height: 1lh; margin: var(--space-xs) 0 0; font-size: var(--text-sm); color: var(--color-muted); }
+.sor-snip-tabs { margin-top: var(--space-sm); }
+.sor-snip-tabs .tabs { margin-bottom: var(--space-sm); }
+.sor-actions { display: flex; gap: var(--space-xs); }
+.pg-meta b.sor-ok { color: var(--color-up); }
+.pg-meta b.sor-bad { color: var(--color-error); }
+.sor-resp { max-height: 40rem; }
+@media (max-width: 64rem) { .sor-pg > .stack { order: -1; } .sor-pg .pg-list { max-height: 24rem; } }
+
+/* Phone: fields take 16px and the full row */
+@media (max-width: 40rem) {
+  .sor-open input, .sor-filters input, .sor-pg .pg-url input { font-size: var(--text-md); }
+  .sor-filters { padding: var(--space-md); }
+  .sor-fields { width: 100%; margin-left: 0; }
+  .sor-topic, .sor-contract { flex: 1 1 9rem; width: auto; }
+  .sor-min { margin-left: 0; }
+  .sor-wasm { padding: var(--space-sm) var(--space-md); }
+}
+.sor-logo-img { object-fit: cover; }

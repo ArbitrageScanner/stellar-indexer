@@ -1,5 +1,5 @@
 import { get, qs } from '../api.js';
-import { html, setHTML, load, card, pageHead, seg, bindSeg, table, num, compact, price, amount, stroops, pct, ago, when, asset, unverified,
+import { html, setHTML, load, card, tile, pageHead, seg, bindSeg, table, num, compact, price, amount, stroops, pct, ago, when, asset, unverified,
   venue, addr, txLink, raw, parseAsset, expert, stackbar, VENUE_LABEL, venueColor, icon, empty } from '../ui.js';
 import { candles } from '../charts.js';
 
@@ -16,50 +16,56 @@ export default async function pair(view, [base, counter], query, ctx) {
   const save = () => ctx.setQuery({ range, interval, mode: mode === 'line' ? 'line' : '', venue: venueFilter });
 
   setHTML(view, html`
-    ${pageHead(html`<span class="pair" style="font-size:20px">${asset(base, { issuer: true })}<span class="slash">/</span>${asset(counter, { issuer: true })}</span>`, {
-      crumbs: html`<a href="#/markets">Markets</a> / pair`,
+    ${pageHead(html`<span class="pair mkt-pair-title">${asset(base, { issuer: true })}<span class="slash">/</span>${asset(counter, { issuer: true })}</span>`, {
+      crumbs: html`<a href="#/markets">Markets</a><span aria-hidden="true">/</span><span>Pair</span>`,
       sub: html`Price of 1 ${B.code} in ${C.code}, combining every venue the indexer decodes: SDEX order book, classic AMM pools and Soroban DEXs (Soroswap, Aquarius, CLMM).`,
       actions: html`<a class="btn" href="${swapHref}" title="Flip base and counter">${icon('flip')}Invert</a>${expert('asset', base, `${B.code} on stellar.expert`)}`,
     })}
-    <div class="card" style="margin-bottom:16px"><div class="card-body">
-      <div id="ticker" class="price-head"><div class="skel" style="height:40px;width:60%"></div></div>
-      <div class="toolbar" style="margin:16px 0 8px">
-        ${seg('range', Object.keys(RANGES).map((r) => [r, r]), range)}
-        ${seg('interval', INTERVALS.map((i) => [i, i]), interval)}
-        <span class="grow"></span>
-        ${seg('mode', [['candles', 'Candles'], ['line', 'Line']], mode)}
-      </div>
-      <div id="chart"></div>
-    </div></div>
-    <div class="grid g-main">
-      ${card('Recent trades', html`<div class="toolbar" style="padding:0 16px" id="vf"></div><div id="trades"></div>`, { flush: true, hint: 'taker side · auto-refreshing' })}
+    <section class="card mkt-quote-card" aria-label="Price"><div id="ticker" class="mkt-quote"><div class="skel mkt-skel-quote"></div></div></section>
+    <div class="mkt-pair-grid">
+      <section class="card mkt-chart-card" aria-label="Price chart">
+        <div class="mkt-chart-tools">
+          <div class="mkt-ctl" role="group" aria-label="Range">${seg('range', Object.keys(RANGES).map((r) => [r, r]), range)}</div>
+          <div class="mkt-ctl" role="group" aria-label="Candle interval">${seg('interval', INTERVALS.map((i) => [i, i]), interval)}</div>
+          <div class="mkt-ctl mkt-mode" role="group" aria-label="Chart type">${seg('mode', [['candles', 'Candles'], ['line', 'Line']], mode)}</div>
+        </div>
+        <div id="chart" class="mkt-chart"></div>
+      </section>
       <div class="stack">
-        ${card('Venue split', html`<div id="split"></div>`, { hint: 'last 200 fills' })}
-        ${card('Top takers', html`<div id="takers"></div>`, { flush: true, hint: 'last 200 fills' })}
+        ${card('Venue split', html`<div id="split"></div>`, { hint: 'Last 200 fills' })}
+        ${card('Top takers', html`<div id="takers"></div>`, { flush: true, hint: 'Last 200 fills' })}
       </div>
+    </div>
+    <div class="mkt-pin">
+      ${card('Recent trades', html`<div class="toolbar mkt-vf" id="vf"></div><div id="trades"></div>`, { flush: true, hint: html`<span>Taker side</span><span>Auto-refreshing</span>` })}
     </div>`);
 
   const ticker = () => load(view.querySelector('#ticker'), () => get('/price' + qs({ base, counter })), (p) => {
     const chg = p.change_24h_pct;
     return html`
-      <div><div class="big">${price(p.last)}</div><div class="muted" style="font-size:12.5px">${C.code} per ${B.code}${p.last_trade_at ? html` · last trade ${ago(p.last_trade_at)}` : ''}</div></div>
-      <div class="chg ${chg > 0 ? 'up' : chg < 0 ? 'down' : ''}">${chg === undefined || chg === null ? '—' : html`${chg > 0 ? '▲' : chg < 0 ? '▼' : ''} ${pct(chg, 2, true)}`} <span class="muted" style="font-size:12px;font-weight:400">24h</span></div>
-      <div class="stat">24h high <b>${price(p.high_24h)}</b></div>
-      <div class="stat">24h low <b>${price(p.low_24h)}</b></div>
-      <div class="stat">24h volume <b>${compact(p.base_volume_24h)}</b> ${B.code} · <b>${compact(p.counter_volume_24h)}</b> ${C.code}</div>
-      <div class="stat">24h trades <b>${num(p.trades_24h)}</b></div>`;
+      <div class="mkt-last">
+        <div class="big">${price(p.last)}</div>
+        <div class="mkt-chg ${chg > 0 ? 'up' : chg < 0 ? 'down' : ''}">${chg === undefined || chg === null ? '—' : html`${chg > 0 ? '▲' : chg < 0 ? '▼' : ''} ${pct(chg, 2, true)}`} <span class="muted">24h</span></div>
+        <div class="mkt-meta"><span>${C.code} per ${B.code}</span>${p.last_trade_at ? html`<span>Last trade ${ago(p.last_trade_at)}</span>` : ''}</div>
+      </div>
+      <div class="tiles mkt-tally">
+        ${tile('24h high', price(p.high_24h))}
+        ${tile('24h low', price(p.low_24h))}
+        ${tile('24h volume', html`${compact(p.base_volume_24h)} <span class="muted">${B.code}</span>`, { foot: html`${compact(p.counter_volume_24h)} ${C.code}` })}
+        ${tile('24h trades', num(p.trades_24h))}
+      </div>`;
   }, { quiet: !!view.querySelector('#ticker .big') });
 
   const chartEl = view.querySelector('#chart');
   const chart = async (quiet) => {
-    if (!quiet) setHTML(chartEl, html`<div class="skel" style="height:420px"></div>`);
+    if (!quiet) setHTML(chartEl, html`<div class="skel mkt-skel-chart"></div>`);
     try {
       const to = new Date();
       const from = new Date(to - RANGES[range][0] * 3600e3);
       const d = await get('/candles' + qs({ base, counter, interval, from: from.toISOString(), to: to.toISOString(), limit: 2000 }));
       if (!ctx.alive()) return;
       const rows = d.candles.map((c) => ({ ...c, t: new Date(c.t).getTime(), volume: c.base_volume })).reverse();
-      candles(chartEl, rows, { height: 420, mode, volumeLabel: `Volume (${B.code})`, emptyText: `No ${B.code}/${C.code} trades in the last ${range}. Try a longer range.` });
+      candles(chartEl, rows, { height: 480, mode, volumeLabel: `Volume (${B.code})`, emptyText: `No ${B.code}/${C.code} trades in the last ${range}. Try a longer range.` });
     } catch (e) {
       if (!quiet) setHTML(chartEl, html`<div class="error-box">${icon('alert')}<div class="msg">${e.message}</div></div>`);
     }

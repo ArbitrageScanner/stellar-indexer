@@ -2,6 +2,7 @@
 // async section loading with skeleton / empty / error states.
 
 import { ApiError } from './api.js';
+import { logoFor, protocolLogo } from './logos.js';
 
 // ---- templating -------------------------------------------------------------
 
@@ -219,7 +220,7 @@ export function expert(kind, id, label = 'stellar.expert') {
 
 // ---- entities ---------------------------------------------------------------
 
-export const copyBtn = (v) => html`<button class="copy" data-copy="${v}" title="Copy">${icon('copy')}</button>`;
+export const copyBtn = (v) => html`<button type="button" class="copy" data-copy="${v}" title="Copy">${icon('copy')}</button>`;
 
 // poolHex decodes a CAP-67 liquidity-pool strkey (L…) to its hex pool id.
 export function poolHex(s) {
@@ -267,9 +268,34 @@ export function asset(key, { issuer = false, link = true } = {}) {
   const av = a.native ? 'XL' : (a.contract ? 'SC' : a.code.slice(0, 2));
   const bg = a.native ? 'var(--ink)' : avColor(a.key);
   const iss = issuer && a.issuer ? html` <span class="iss" title="${a.issuer}">${short(a.issuer, 4, 4)}</span>` : '';
-  const body = html`<span class="av" style="background:${raw(bg)};${raw(a.native ? 'color:var(--surface)' : '')}">${av}</span><span class="code">${a.code}</span>${iss}`;
+  const body = html`${avatar(a.key, av, bg, a.native ? 'color:var(--surface)' : '')}<span class="code">${a.code}</span>${iss}`;
   return link ? html`<a class="asset" href="#/asset/${encodeURIComponent(a.key)}" title="${a.key}">${body}</a>` : html`<span class="asset" title="${a.key}">${body}</span>`;
 }
+
+// avatar is the asset's logo when one is known (bundled or resolved by the
+// indexer), else its initials on a series colour. A logo that fails to load
+// falls back to the initials (see the error listener below).
+function avatar(key, initials, bg, extra = '') {
+  const src = logoFor(key);
+  if (src) return html`<img class="av av-img" src="${src}" alt="" width="22" height="22" loading="lazy" decoding="async" data-av="${initials}" data-bg="${bg}">`;
+  return html`<span class="av" style="background:${raw(bg)};${raw(extra)}">${initials}</span>`;
+}
+
+// logoMark renders a protocol's mark, or '' when it has none.
+export function logoMark(protocol, cls = 'mark') {
+  const src = protocolLogo(protocol);
+  return src ? html`<img class="${cls}" src="${src}" alt="" width="36" height="36" decoding="async">` : '';
+}
+
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains('av-img')) return;
+  const span = document.createElement('span');
+  span.className = 'av';
+  span.style.background = img.dataset.bg || 'var(--muted)';
+  span.textContent = img.dataset.av || '';
+  img.replaceWith(span);
+}, true);
 
 export function pairLink(base, counter) {
   return html`<a class="pair" href="#/pair/${encodeURIComponent(base)}/${encodeURIComponent(counter)}">${asset(base, { link: false })}<span class="slash">/</span>${asset(counter, { link: false })}</a>`;
@@ -290,7 +316,7 @@ export const tag = (s) => html`<span class="tag">${s}</span>`;
 // unverified marks rows whose contract code is not allowlisted for the
 // protocol: stored and shown, but excluded from prices and analytics.
 export const unverified = (row) => row && row.verified === false
-  ? html` <span class="badge warn" title="Contract code is not allowlisted for this protocol: kept for inspection, excluded from prices and analytics">unverified</span>`
+  ? html` <span class="badge warn" title="Contract code is not allowlisted for this protocol: kept for inspection, excluded from prices and analytics">Unverified</span>`
   : '';
 
 // ---- JSON -------------------------------------------------------------------
@@ -476,4 +502,11 @@ export function bindTabs(root, onPick) {
     root.querySelectorAll('[data-tab]').forEach((x) => x.classList.toggle('on', x === a));
     onPick(a.dataset.tab);
   }));
+}
+
+// dec sets the fractional part of a formatted figure in muted ink (Dusk's
+// muted decimals): dec('0.0291') → 0<span class="dec">.0291</span>.
+export function dec(s) {
+  const str = String(s), i = str.indexOf('.');
+  return i < 0 ? html`${str}` : html`${str.slice(0, i)}<span class="dec">${str.slice(i)}</span>`;
 }

@@ -17,9 +17,9 @@ export function alertRow(a) {
   switch (a.kind) {
     case 'large_transfer':
       title = html`${a.action === 'transfer' ? 'Moved' : a.action === 'mint' ? 'Minted' : a.action === 'burn' ? 'Burned' : a.action} <b>${amount(a.amount)}</b> ${asset(a.asset)}`;
-      meta = [html`${addr(a.from_addr)} → ${addr(a.to_addr)}`]; break;
+      meta = [html`<span class="sor-flow">${addr(a.from_addr)}<span class="arrow sor-arrow" aria-hidden="true">→</span>${addr(a.to_addr)}</span>`]; break;
     case 'large_trade':
-      title = html`Swapped <b>${amount(a.amount)}</b> ${asset(a.asset)} → <b>${amount(a.amount2)}</b> ${asset(a.asset2)}`;
+      title = html`Swapped <b>${amount(a.amount)}</b> ${asset(a.asset)} <span class="arrow sor-arrow" aria-hidden="true">→</span> <b>${amount(a.amount2)}</b> ${asset(a.asset2)}`;
       meta = [html`on ${VENUE_LABEL[a.action] || a.action}`, html`by ${addr(a.from_addr)}`]; break;
     case 'flash_loan':
       title = html`Flash loan of <b>${amount(a.amount)}</b> ${asset(a.asset)}`;
@@ -36,8 +36,8 @@ export function alertRow(a) {
     default:
       title = a.kind;
   }
-  return html`<div class="alert-row"><div class="ic" style="background:${raw(color)}">${icon(ic)}</div>
-    <div><div class="t">${title}</div><div class="m"><span class="badge" style="height:18px">${label}</span>${when(a.closed_at)}${meta.map((m) => html`<span>${m}</span>`)}${a.tx_hash ? html`<span>${txLink(a.tx_hash)}</span>` : ''}</div></div>
+  return html`<div class="alert-row sor-arow"><div class="ic" style="background:${raw(color)}">${icon(ic)}</div>
+    <div><div class="t">${title}</div><div class="m"><span class="badge sor-akind">${label}</span>${when(a.closed_at)}${meta.map((m) => html`<span>${m}</span>`)}${a.tx_hash ? html`<span>${txLink(a.tx_hash)}</span>` : ''}</div></div>
     <div class="v">${a.value_xlm ? html`<b>${compact(a.value_xlm)}</b> <span class="muted">XLM</span>` : ''}</div></div>`;
 }
 
@@ -48,12 +48,14 @@ export default async function alerts(view, _p, query, ctx) {
       sub: 'Alerts mined from the index: large transfers and swaps (valued in XLM), Blend flash loans, profitable same-transaction arbitrage, sharp hourly price moves on liquid XLM pairs, and assets first seen at least a day after indexing began. Refreshes every 30 s.',
       actions: seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours),
     })}
-    <div class="toolbar"><span id="kinds"></span><span class="grow"></span>
-      <label>Min value <input id="min" type="number" min="1" step="1000" value="${minXLM}" style="width:110px"> XLM</label></div>
-    <div class="card"><div class="card-body flush" id="feed"></div></div>`);
+    <section class="card" aria-label="Notable events">
+      <div class="sor-filters sor-afilters"><span id="kinds"></span>
+        <label class="sor-min">Min value <input id="min" name="min_xlm" type="number" inputmode="numeric" min="1" step="1000" value="${minXLM}"> <span class="muted">XLM</span></label></div>
+      <div class="card-body flush" id="feed"></div>
+    </section>`);
   const feedEl = view.querySelector('#feed');
   const run = (quiet) => load(feedEl, () => get('/alerts' + qs({ hours, min_xlm: minXLM, limit: 300 })), (d) => {
-    setHTML(view.querySelector('#kinds'), seg('kind', [['', `All ${num(d.alerts.length)}`], ...Object.entries(KINDS).map(([k, [l]]) => [k, `${l} ${d.counts[k] ?? 0}`])], kind));
+    setHTML(view.querySelector('#kinds'), seg('kind', [['', html`All <span class="sor-count">${num(d.alerts.length)}</span>`], ...Object.entries(KINDS).map(([k, [l]]) => [k, html`${l} <span class="sor-count">${d.counts[k] ?? 0}</span>`])], kind));
     bindSeg(view.querySelector('#kinds'), 'kind', (k) => { kind = k; save(); run(false); });
     const list = d.alerts.filter((a) => !kind || a.kind === kind);
     return list.length ? html`${list.map(alertRow)}` : empty('Nothing notable', 'No events cross the thresholds in this window. Lower the minimum value or widen the window.');

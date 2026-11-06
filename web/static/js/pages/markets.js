@@ -12,20 +12,20 @@ export default async function markets(view, _p, query, ctx) {
       actions: seg('hours', [['1', '1h'], ['24', '24h'], ['168', '7d']], hours),
     })}
     <div class="tiles" id="tiles"></div>
-    <div class="grid g-main" style="margin-bottom:16px">
+    <div class="mkt-top">
+      ${card('Trades by venue', html`<div id="venues"></div>`)}
       ${card('Open any pair', html`
-        <form id="open" class="toolbar" style="margin:0">
-          <input name="base" list="assets-dl" placeholder="Base: native, USDC:G…, or C… contract" style="flex:1;min-width:200px" required>
-          <input name="counter" list="assets-dl" placeholder="Counter" style="flex:1;min-width:200px" required>
-          <button class="btn primary">Open chart</button>
+        <form id="open" class="mkt-open">
+          <label class="mkt-field"><span>Base</span><input name="base" list="assets-dl" placeholder="native, USDC:G…, or C… contract" autocomplete="off" required></label>
+          <label class="mkt-field"><span>Counter</span><input name="counter" list="assets-dl" placeholder="native, USDC:G…, or C… contract" autocomplete="off" required></label>
+          <button type="submit" class="btn primary">Open chart</button>
           <datalist id="assets-dl"></datalist>
         </form>
-        <div class="muted" style="font-size:12.5px;margin-top:8px">Examples: <a href="#/pair/native/USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN">XLM / USDC</a> (pubnet) · <a href="#/pair/native/AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA">XLM / AQUA</a> (pubnet) · or pick from the table below.</div>`)}
-      ${card('Trades by venue', html`<div id="venues"></div>`)}
+        <p class="mkt-examples">Examples: <a href="#/pair/native/USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN">XLM / USDC</a> (pubnet), <a href="#/pair/native/AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA">XLM / AQUA</a> (pubnet), or pick from the table below.</p>`)}
     </div>
-    <div class="card">
+    <div class="card mkt-pin">
       <div class="card-head"><h2>Pairs</h2>
-        <div class="toolbar" style="margin:0"><input type="search" id="filter" placeholder="Filter by asset code" value="${filter}"><span id="vseg"></span></div></div>
+        <div class="toolbar mkt-pair-tools"><input type="search" id="filter" placeholder="Filter by asset code" aria-label="Filter pairs by asset code" value="${filter}"><span id="vseg"></span></div></div>
       <div class="card-body flush" id="pairs"></div>
     </div>`);
 
@@ -61,8 +61,8 @@ export default async function markets(view, _p, query, ctx) {
       const venues = new Set(r.flatMap((x) => x.venues));
       const assets = new Set(r.flatMap((x) => [x.base, x.counter]));
       setHTML(view.querySelector('#tiles'), html`
-        ${tile('Active pairs', num(r.length), { foot: r.length === 500 ? 'top 500 by trades' : `in the last ${hours}h` })}
-        ${tile('Fills', compact(trades), { foot: 'all venues', title: num(trades) })}
+        ${tile('Active pairs', num(r.length), { foot: r.length === 500 ? 'Top 500 by trades' : `In the last ${hours}h` })}
+        ${tile('Fills', compact(trades), { foot: 'All venues', title: num(trades) })}
         ${tile('Assets traded', num(assets.size))}
         ${tile('Venues', num(venues.size), { foot: [...venues].map((v) => VENUE_LABEL[v] || v).join(', ') })}`);
       setHTML(view.querySelector('#vseg'), seg('venue', [['', 'All'], ...[...venues].map((v) => [v, VENUE_LABEL[v] || v])], venueF));
@@ -71,7 +71,7 @@ export default async function markets(view, _p, query, ctx) {
     }, { after: draw });
     load(view.querySelector('#venues'), () => get('/protocols' + qs({ hours })), (d) => (d.trade_venues || []).length
       ? html`${stackbar(d.trade_venues.map((v) => ({ label: VENUE_LABEL[v.venue] || v.venue, value: v.trades, color: venueColor(v.venue) })))}
-        <div class="table-wrap" style="margin-top:12px">${table([
+        <div class="table-wrap mkt-venue-table">${table([
           { h: 'Venue', v: (v) => venue(v.venue) }, { h: 'Fills', cls: 'num', v: (v) => num(v.trades) },
           { h: 'Pools', cls: 'num', v: (v) => num(v.pools) }, { h: 'Takers', cls: 'num', v: (v) => num(v.takers) },
         ], d.trade_venues, { rowHref: (v) => `#/trades?venue=${v.venue}` })}</div>`

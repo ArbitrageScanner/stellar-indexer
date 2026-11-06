@@ -6,9 +6,9 @@ export default async function ops(view, _p, query, ctx) {
   let type = query.type || '';
   setHTML(view, html`
     ${pageHead('Operations', { sub: 'Operation mix over the last 24 hours and a typed feed of individual operations with decoded details.' })}
-    <div class="grid g-main" style="margin-bottom:16px">
-      <div class="card"><div class="card-head"><h2 id="feed-title">Latest operations</h2><select id="type"><option value="">All types</option></select></div><div class="card-body flush" id="list"></div></div>
-      ${card('Mix (24h)', html`<div id="mix"></div>`, { hint: 'click to filter' })}
+    <div class="stack chain-ops">
+      <div class="chain-mix">${card('Mix (24h)', html`<div id="mix"></div>`, { hint: 'Click a type to filter' })}</div>
+      <section class="card chain-list" aria-labelledby="feed-title"><div class="card-head"><h2 id="feed-title" class="chain-optype">Latest operations</h2><select id="type" aria-label="Operation type"><option value="">All types</option></select></div><div class="card-body flush" id="list"></div></section>
     </div>`);
   const sel = view.querySelector('#type');
   load(view.querySelector('#mix'), () => get('/stats/operations?hours=24'), (rows) => {
@@ -25,9 +25,9 @@ export default async function ops(view, _p, query, ctx) {
       rowHref: (o) => `#/tx/${o.tx_hash}`,
       cols: [
         { h: 'Time', v: (o) => when(o.closed_at) },
-        { h: 'Type', v: (o) => html`<b>${snake(o.type)}</b>${o.successful ? '' : html` <span class="badge fail">failed</span>`}` },
+        { h: 'Type', v: (o) => html`<span class="chain-type"><b class="chain-optype">${snake(o.type)}</b>${o.successful ? '' : html`<span class="badge fail">Failed</span>`}</span>` },
         { h: 'Source', v: (o) => addr(o.source) },
-        { h: 'Details', v: (o) => opSummary(o.type, o.details) },
+        { h: 'Details', cls: 'wrap chain-det', v: (o) => opSummary(o.type, o.details) },
         { h: 'Tx', v: (o) => txLink(o.tx_hash) },
       ],
       emptyTitle: 'No operations', emptyText: 'Operations are indexed when INDEX_OPERATIONS=true.',

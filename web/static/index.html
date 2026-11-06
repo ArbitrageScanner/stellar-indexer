@@ -6,7 +6,12 @@
 <title>Stellar Indexer Explorer</title>
 <meta name="description" content="Analytics explorer for the stellar-indexer: network, markets, accounts, Soroban protocols and contract events.">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/wix-madefor-text-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/screens/chain.css">
+<link rel="stylesheet" href="css/screens/accounts.css">
+<link rel="stylesheet" href="css/screens/markets.css">
+<link rel="stylesheet" href="css/screens/soroban.css">
 <script src="config.js"></script>
 <script src="js/theme-init.js"></script>
 </head>
@@ -14,7 +19,7 @@
 <div class="app">
   <aside class="sidebar" id="sidebar">
     <a class="brand" href="#/">
-      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--accent)"/><path d="M7 19.5 25 11M7 15.5l18-8.5M7 23.5l18-8.5" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect width="32" height="32" rx="8" fill="var(--color-accent)"/><path d="M7 19.5 25 11M7 15.5l18-8.5M7 23.5l18-8.5" stroke="var(--color-accent-ink)" stroke-width="2.2" stroke-linecap="round"/></svg>
       <span><b>Stellar</b> Indexer</span>
     </a>
     <nav class="nav" id="nav">

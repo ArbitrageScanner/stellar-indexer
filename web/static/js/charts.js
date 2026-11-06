@@ -336,7 +336,7 @@ export function donut(el, slices, { size = 220, center = '', sub = '', fmt = com
       const x = slices[+p.dataset.i];
       el.querySelectorAll('.slice').forEach((q) => q.style.opacity = q === p ? '1' : '0.45');
       c1.textContent = `${(x.value / total * 100).toFixed(1)}%`;
-      c2.textContent = `${x.label} · ${fmt(x.value)}`;
+      c2.textContent = `${x.label}: ${fmt(x.value)}`;
     });
     p.addEventListener('pointerleave', () => {
       el.querySelectorAll('.slice').forEach((q) => q.style.opacity = '1');
@@ -360,8 +360,8 @@ export function heatmap(el, cells, { label = 'transactions' } = {}) {
   const step = (v) => v === 0 ? 0 : 1 + Math.min(5, Math.floor(Math.log(v) / Math.log(max + 1) * 6));
   let h = `<div class="heat"><div></div>${Array.from({ length: 24 }, (_, i) => `<div class="hl">${i % 3 === 0 ? i : ''}</div>`).join('')}`;
   grid.forEach((row, d) => {
-    h += `<div class="dl">${DOW[d]}</div>` + row.map((v, hr) => `<div class="hc" style="background:${RAMP[step(v)]}" data-tip="${DOW[d]} ${String(hr).padStart(2, '0')}:00 UTC · ${v} ${label}"></div>`).join('');
+    h += `<div class="dl">${DOW[d]}</div>` + row.map((v, hr) => `<div class="hc" style="background:${RAMP[step(v)]}" data-tip="${DOW[d]} ${String(hr).padStart(2, '0')}:00 UTC, ${v} ${label}"></div>`).join('');
   });
-  h += `</div><div class="legend" style="justify-content:flex-end">less ${RAMP.slice(1).map((c) => `<i class="sw" style="background:${c}"></i>`).join('')} more <span class="muted">· max ${max}/h · UTC</span></div>`;
+  h += `</div><div class="legend heat-legend">Less ${RAMP.slice(1).map((c) => `<i class="sw" style="background:${c}"></i>`).join('')} More <span class="muted">Max ${max}/h, UTC</span></div>`;
   el.innerHTML = h;
 }

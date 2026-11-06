@@ -1,6 +1,6 @@
 import { get, qs, blocked } from '../api.js';
 import { html, setHTML, load, card, tile, pageHead, seg, bindSeg, hbars, stackbar, table, num, compact, pct, amount, ago, duration,
-  bytes, ledgerLink, pairLink, venue, price, raw, state, snake, VENUE_LABEL, venueColor, empty } from '../ui.js';
+  bytes, ledgerLink, pairLink, venue, price, raw, state, snake, VENUE_LABEL, venueColor, empty, dec } from '../ui.js';
 import { columns, line, sparkline } from '../charts.js';
 import { alertRow } from './alerts.js';
 
@@ -14,21 +14,25 @@ export default async function overview(view, _p, query, ctx) {
       sub: html`Live analytics from the indexed Stellar <b>${state.network || '…'}</b> ledgers: throughput, fees, the operation mix, markets and Soroban protocol activity.`,
       actions: seg('window', [['1h', 'Last hour'], ['24h', '24 hours'], ['7d', '7 days']], win),
     })}
-    <div class="tiles" id="tiles"></div>
-    <div class="grid g2" style="margin-bottom:16px">
-      ${card('Transactions', html`<div id="c-tx"></div><div class="legend"><span><i class="sw" style="background:var(--s1)"></i>Successful</span><span><i class="sw" style="background:var(--s2)"></i>Failed</span></div>`, { hint: html`<span id="c-tx-hint"></span>` })}
-      ${card('Operations & Soroban share', html`<div id="c-ops"></div><div id="c-sor" style="margin-top:8px"></div><div class="legend"><span><i class="ln" style="background:var(--s1)"></i>Operations</span><span><i class="ln" style="background:var(--s7)"></i>Soroban share of txs</span></div>`)}
+    <div class="tiles ov-tally" id="tiles" role="group" aria-label="Network figures"></div>
+    <div class="ov-lead">
+      ${card('Latest ledgers', html`<div id="feed" class="ov-run"></div>`, { flush: true, hint: html`<span>Refreshes every 5s</span><a href="#/ledgers">All ledgers</a>` })}
+      <div class="stack">
+        ${card('Transactions', html`<div id="c-tx"></div><div class="legend"><span><i class="sw" style="background:var(--s1)"></i>Successful</span><span><i class="sw" style="background:var(--s2)"></i>Failed</span></div>`, { hint: html`<span id="c-tx-hint"></span>` })}
+        ${card('Operations and Soroban share', html`<div id="c-ops"></div><div id="c-sor" class="ov-sor"></div><div class="legend"><span><i class="ln" style="background:var(--s1)"></i>Operations</span><span><i class="ln" style="background:var(--s7)"></i>Soroban share of txs</span></div>`)}
+      </div>
     </div>
-    <div class="grid g-main" style="margin-bottom:16px">
-      ${card('Latest ledgers', html`<div id="feed"></div>`, { flush: true, hint: html`auto-refreshing · <a href="#/ledgers">all ledgers</a>` })}
-      ${card('Operation mix', html`<div id="opmix"></div>`, { hint: html`<a href="#/ops">explore</a>` })}
+    <div class="ov-lead ov-pair">
+      <div class="stack">
+        ${card('Top markets', html`<div id="pairs" class="ov-markets"></div>`, { flush: true, hint: html`<span>By trades</span><a href="#/markets">All markets</a>` })}
+        ${card('Soroban protocols', html`<div id="protos"></div>`, { hint: html`<a href="#/protocols">Protocol details</a>` })}
+      </div>
+      ${card('Notable events', html`<div id="alerts"></div>`, { flush: true, hint: html`<span>Large transfers, swaps, flash loans, arbitrage</span><a href="#/alerts">All events</a>` })}
     </div>
-    <div class="grid g2" style="margin-bottom:16px">
-      ${card('Top markets', html`<div id="pairs"></div>`, { flush: true, hint: html`by trades · <a href="#/markets">all markets</a>` })}
-      ${card('Soroban protocols', html`<div id="protos"></div>`, { hint: html`<a href="#/protocols">details</a>` })}
+    <div class="grid g2 ov-stack">
+      ${card('Operation mix', html`<div id="opmix" class="ov-mix"></div>`, { hint: html`<a href="#/ops">Explore operations</a>` })}
+      ${card('Index storage', html`<div id="tables"></div>`, { flush: true, hint: 'Postgres table sizes (planner row estimates)' })}
     </div>
-    <div style="margin-bottom:16px">${card('Notable events', html`<div id="alerts"></div>`, { flush: true, hint: html`large transfers, swaps, flash loans, arbitrage · <a href="#/alerts">all events</a>` })}</div>
-    ${card('Index storage', html`<div id="tables"></div>`, { flush: true, hint: 'Postgres table sizes (planner row estimates)' })}
   `);
 
   const statsEl = view.querySelector('#tiles');
@@ -42,13 +46,13 @@ export default async function overview(view, _p, query, ctx) {
     const asc = [...b].reverse();
     const lag = s.lag_seconds;
     setHTML(statsEl, html`
-      ${tile('Latest indexed ledger', s.cursor ? html`<a href="#/ledger/${s.cursor}" style="color:inherit">${num(s.cursor)}</a>` : '—', { foot: s.last_closed_at ? `closed ${ago(s.last_closed_at)} · protocol ${b[0]?.protocol ?? '—'}` : 'waiting for first ledger' })}
-      ${tile('Ingestion lag', lag === undefined || lag === null ? '—' : lag <= 60 ? html`<span class="up">${lag}s</span>` : duration(lag),
+      ${tile('Latest indexed ledger', s.cursor ? html`<a href="#/ledger/${s.cursor}">${num(s.cursor)}</a>` : '—', { foot: s.last_closed_at ? `Closed ${ago(s.last_closed_at)}, protocol ${b[0]?.protocol ?? '—'}` : 'Waiting for the first ledger' })}
+      ${tile('Ingestion lag', lag === undefined || lag === null ? '—' : lag <= 60 ? `${lag}s` : duration(lag),
         { foot: s.rpc_tip ? `${num(s.lag_ledgers)} ledgers behind RPC tip ${num(s.rpc_tip)}` : 'API-only mode: tip unknown' })}
-      ${tile('Transactions', compact(txs), { foot: `${pct(txs ? ok / txs * 100 : 0, 1)} successful · ${num(ledgers ? txs / ledgers : 0, 1)}/ledger`, title: num(txs) })}
+      ${tile('Transactions', compact(txs), { foot: `${pct(txs ? ok / txs * 100 : 0, 1)} successful, ${num(ledgers ? txs / ledgers : 0, 1)} per ledger`, title: num(txs) })}
       ${tile('Operations', compact(ops), { foot: `${num(ledgers ? ops / ledgers : 0, 1)} per ledger`, title: num(ops) })}
       ${tile('Soroban share', pct(txs ? sor / txs * 100 : 0, 1), { foot: `${compact(sor)} smart-contract txs` })}
-      ${tile('Fees burned', html`${amount(fees, 2)} <span class="muted" style="font-size:14px">XLM</span>`, { foot: `over ${ledgers} ledgers in window` })}
+      ${tile('Fees burned', html`${amount(fees, 2)} <span class="muted">XLM</span>`, { foot: `Over ${num(ledgers)} ledgers in the window` })}
     `);
     statsEl.querySelectorAll('.tile').forEach((t, i) => {
       const key = [null, null, 'txs', 'ops', 'soroban_txs', 'fees_xlm'][i];
@@ -69,7 +73,7 @@ export default async function overview(view, _p, query, ctx) {
       view.querySelector('#c-ops').innerHTML = view.querySelector('#c-sor').innerHTML = '';
     } else {
       columns(txEl, asc, [{ key: 'txs_ok', label: 'Successful', color: 'var(--s1)' }, { key: 'txs_failed', label: 'Failed', color: 'var(--s2)' }],
-        { height: 240, fmt: (v) => num(v), extra: [['Ledgers', (d) => num(d.ledgers)], ['Avg txs/ledger', (d) => num(d.avg_txs_per_ledger, 1)]] });
+        { height: 200, fmt: (v) => num(v), extra: [['Ledgers', (d) => num(d.ledgers)], ['Avg txs/ledger', (d) => num(d.avg_txs_per_ledger, 1)]] });
       line(view.querySelector('#c-ops'), asc, [{ key: 'ops', label: 'Operations', color: 'var(--s1)', area: true }], { height: 140, fmt: compact });
       line(view.querySelector('#c-sor'), asc, [{ key: 'share', label: 'Soroban share', color: 'var(--s7)' }], { height: 92, fmt: (v) => pct(v, 0), yMin: 0 });
     }
@@ -87,7 +91,7 @@ export default async function overview(view, _p, query, ctx) {
     const venues = d.trade_venues || [];
     return html`
       ${hbars((d.protocols || []).map((p) => ({ label: VENUE_LABEL[p.protocol] || p.protocol, value: p.events, color: venueColor(p.protocol), href: `#/protocol/${p.protocol}`, title: `${p.protocol}: ${num(p.events)} events, ${num(p.users)} users, ${num(p.txs)} txs` })), { fmt: compact })}
-      <h3 style="margin:18px 0 8px">Trades by venue</h3>
+      <h3 class="ov-sub">Trades by venue</h3>
       ${venues.length ? stackbar(venues.map((v) => ({ label: VENUE_LABEL[v.venue] || v.venue, value: v.trades, color: venueColor(v.venue) }))) : empty('No trades in this window')}`;
   });
 
@@ -95,7 +99,7 @@ export default async function overview(view, _p, query, ctx) {
     { h: 'Pair', v: (r) => pairLink(r.base, r.counter) },
     { h: 'Last price', cls: 'num', v: (r) => price(r.last_price) },
     { h: 'Trades', cls: 'num', v: (r) => num(r.trades) },
-    { h: 'Venues', v: (r) => raw(r.venues.slice(0, 3).map((v) => venue(v).s).join(' ') + (r.venues.length > 3 ? ` <span class="muted">+${r.venues.length - 3}</span>` : '')) },
+    { h: 'Venues', cls: 'ov-venues', v: (r) => raw(r.venues.slice(0, 3).map((v) => venue(v).s).join(' ') + (r.venues.length > 3 ? ` <span class="muted">+${r.venues.length - 3}</span>` : '')) },
   ], rows, { rowHref: (r) => `#/pair/${encodeURIComponent(r.base)}/${encodeURIComponent(r.counter)}`, emptyTitle: 'No trades yet', emptyText: 'Markets appear once the indexer has seen SDEX, AMM or Soroban DEX fills.' }));
 
   // Live ledger feed: new rows flash in.
@@ -105,10 +109,10 @@ export default async function overview(view, _p, query, ctx) {
     const html_ = html`${rows.map((l) => {
       const okW = l.tx_count ? l.tx_success / l.tx_count * 100 : 0;
       return html`<div class="feed-row ${seen.size && !seen.has(l.sequence) ? 'new' : ''}">
-        <div><div class="seq">${ledgerLink(l.sequence)}</div><div class="muted" style="font-size:12px">${ago(l.closed_at)}</div></div>
-        <div><div style="font-size:12.5px"><b>${num(l.tx_count)}</b> txs · ${num(l.op_count)} ops · ${num(l.soroban_tx_count)} soroban</div>
-          <div class="minibar" title="${num(l.tx_success)} successful / ${num(l.tx_failed)} failed"><span style="width:${raw(okW.toFixed(1))}%;background:var(--s1)"></span><span style="width:${raw((100 - okW).toFixed(1))}%;background:var(--s2)"></span></div></div>
-        <div class="num muted" style="font-size:12px">${amount(l.fees_charged / 1e7, 3)} XLM fees</div></div>`;
+        <div><div class="seq">${ledgerLink(l.sequence)}</div><div class="when">${ago(l.closed_at)}</div></div>
+        <div><div class="counts"><span><b>${num(l.tx_count)}</b> txs</span><span><b>${num(l.op_count)}</b> ops</span><span><b>${num(l.soroban_tx_count)}</b> Soroban</span></div>
+          <div class="minibar" title="${num(l.tx_success)} successful, ${num(l.tx_failed)} failed"><span style="width:${raw(okW.toFixed(1))}%;background:var(--s1)"></span><span style="width:${raw((100 - okW).toFixed(1))}%;background:var(--s2)"></span></div></div>
+        <div class="fee" title="Fees charged">${dec(amount(l.fees_charged / 1e7, 3))} <span class="unit">XLM</span>${l.tx_failed ? html`<div class="failed">${num(l.tx_failed)} failed</div>` : l.tx_count ? html`<div class="settled">All succeeded</div>` : ''}</div></div>`;
     })}`;
     seen = new Set(rows.map((l) => l.sequence));
     return rows.length ? html_ : empty('No ledgers indexed yet', 'Start the indexer (indexer run) and ledgers will stream in here.');
@@ -118,7 +122,7 @@ export default async function overview(view, _p, query, ctx) {
     { h: 'Table', v: (r) => html`<code>${r.table}</code>` },
     { h: 'Rows (est.)', cls: 'num', v: (r) => num(r.rows_estimate) },
     { h: 'Size', cls: 'num', v: (r) => bytes(r.bytes) },
-    { h: '', v: (r) => html`<div class="minibar" style="height:6px;border-radius:3px;background:var(--surface-3);min-width:80px"><span style="display:block;height:100%;border-radius:3px;width:${raw((r.bytes / Math.max(...rows.map((x) => x.bytes), 1) * 100).toFixed(1))}%;background:var(--s1)"></span></div>` },
+    { h: 'Share of storage', v: (r) => html`<span class="storage-bar"><span style="width:${raw((r.bytes / Math.max(...rows.map((x) => x.bytes), 1) * 100).toFixed(1))}%"></span></span>` },
   ], rows));
 
   const alertsEl = view.querySelector('#alerts');
