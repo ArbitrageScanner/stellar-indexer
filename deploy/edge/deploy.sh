@@ -3,7 +3,7 @@
 # Docker host. Configuration and secrets come from the environment (GitHub
 # Actions in CI); nothing is built on the host, images are pulled.
 #
-#   EDGE_SSH=deploy@203.0.113.10 IMAGE_TAG=<git sha> DOMAIN=stellar.example.org \
+#   EDGE_SSH=deploy@edge.example.org IMAGE_TAG=<git sha> DOMAIN=stellar.example.org \
 #   INTERNAL_API_KEY=… MTLS_CA_CRT_B64=… MTLS_GATEWAY_CRT_B64=… MTLS_GATEWAY_KEY_B64=… \
 #   TUNNEL_HOST_KEY_B64=… TUNNEL_CLIENT_PUB='ssh-ed25519 AAAA…' \
 #   deploy/edge/deploy.sh

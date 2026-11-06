@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 # Prints a kubeconfig for the namespace-scoped CI deployer. Run where kubectl
-# has cluster-admin (e.g. on the k3s node). Usage: make-kubeconfig.sh [api-url]
+# has cluster-admin (e.g. on the k3s node). Usage: make-kubeconfig.sh <api-url>,
+# e.g. https://k3s.example.org:6443
 set -eu
 NS=stellar-indexer
-SERVER=${1:-https://203.0.113.20:6443}
+SERVER=${1:?usage: make-kubeconfig.sh <api-url>}
 TOKEN=$(kubectl -n "$NS" get secret ci-deployer-token -o jsonpath='{.data.token}' | base64 -d)
 CA=$(kubectl -n "$NS" get secret ci-deployer-token -o jsonpath='{.data.ca\.crt}')
 cat <<KCFG

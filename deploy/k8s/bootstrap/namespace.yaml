@@ -11,7 +11,7 @@ metadata:
   labels:
     pod-security.kubernetes.io/enforce: restricted
 ---
-# The node is shared with other production workloads: cap what this namespace can take.
+# Cap what this namespace can take, so it can share a cluster with other workloads.
 apiVersion: v1
 kind: ResourceQuota
 metadata: { name: stellar-indexer-quota, namespace: stellar-indexer }

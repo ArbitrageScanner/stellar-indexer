@@ -3,8 +3,7 @@ name: deploy
 # Called by ci.yml after the images for a main commit are published, or run by
 # hand to redeploy / roll back to any published commit sha.
 #
-# Repository-level secrets and variables (environment secrets are not available
-# on private repos with GitHub Free; ci.yml also checks vars.DEPLOY_ENABLED on a
+# Repository-level secrets and variables (ci.yml checks vars.DEPLOY_ENABLED on a
 # job without an environment, which only sees repository variables):
 #   secrets:   KUBECONFIG_B64, POSTGRES_PASSWORD, INTERNAL_API_KEY, LABELS_TOKEN,
 #              MTLS_CA_CRT_B64, MTLS_API_CRT_B64, MTLS_API_KEY_B64,

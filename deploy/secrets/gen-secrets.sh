@@ -2,7 +2,7 @@
 # Generates every deployment secret once, as KEY=VALUE lines (multi-line
 # values base64-encoded) for GitHub Actions environment secrets/variables.
 #
-#   deploy/secrets/gen-secrets.sh <edge-host> <out.env>      # e.g. 203.0.113.10
+#   deploy/secrets/gen-secrets.sh <edge-host> <out.env>      # e.g. edge.example.org
 #
 # Also writes <out.env>.ca.key (the mTLS CA key): keep it offline, it is only
 # needed to issue new certificates. Public values (*_PUB, TUNNEL_KNOWN_HOSTS)
